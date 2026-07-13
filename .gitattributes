@@ -1,0 +1,6 @@
+# normalize text เป็น LF, ปล่อยไฟล์ไบนารีไว้เฉยๆ
+* text=auto eol=lf
+*.dll binary
+*.png binary
+*.jpg binary
+*.gif binary
