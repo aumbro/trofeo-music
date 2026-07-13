@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ไฟล์สื่อ/ทดสอบส่วนตัว (อย่าเผลอ commit wallpaper/รูป/คลิปของตัวเอง — อาจติดลิขสิทธิ์)
+# ถ้าจะใส่ asset ตั้งใจลง repo ใช้ `git add -f ชื่อไฟล์`
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.gif
+*.jpg
+*.jpeg
+*.png
+
+# หมายเหตุ: libusb-1.0.dll ตั้งใจ commit ขึ้นไป (ให้ใช้ได้ทันทีไม่ต้องหา backend)

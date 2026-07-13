@@ -1,0 +1,13 @@
+# จำเป็น
+pyusb>=1.2.1
+pillow>=10.0.0
+
+# backend libusb: โปรเจกต์นี้มี libusb-1.0.dll (64-bit) แถมมาในโฟลเดอร์แล้ว
+# trofeo.py โหลด dll นั้นเองอัตโนมัติ จึงไม่ต้องลง libusb-package
+# (ถ้าจะใช้ package แทน ให้ลง 'libusb-package' เวอร์ชันที่มี wheel เช่น 1.0.26.4/1.0.30.0
+#  — ระวังชนกับ bumble ที่ pin ==1.0.26.1)
+
+# ทางเลือก: เล่นวิดีโอ (mp4/mov/mkv/...) — GIF/ภาพนิ่งไม่ต้องใช้
+imageio>=2.31
+imageio-ffmpeg>=0.4.9
+av>=11.0.0
