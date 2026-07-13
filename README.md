@@ -4,6 +4,11 @@
 ด้วย Python — โครงสร้างแนวเดียวกับโปรเจกต์ `KeyboardDisplay/Kx87.py` (SARU KX87) แต่เปลี่ยน
 transport จาก USB **HID** เป็น USB **bulk** (โปรโตคอล **LY**) และจอเป็นภาพ **JPEG** เต็มจอ
 
+<p align="center">
+  <img src="assets/Trofeo01.GIF" alt="จอ Trofeo Vision 9.16 ตั้งแนวตั้ง รัน claw.py โชว์ Clawdmeter dashboard พร้อม usage จริง" width="300"><br>
+  <sub>จอ Trofeo Vision 9.16 ตั้งแนวตั้ง รัน <a href="claw.py"><code>claw.py</code></a> — Clawdmeter dashboard (usage จริง + มัสคอต + ธงตามคีย์บอร์ด)</sub>
+</p>
+
 โปรโตคอล LY reverse-engineer มาจาก TRCC v2.1.2 (อ้างอิงโปรเจกต์
 [thermalright-trcc-linux](https://github.com/Lexonight1/thermalright-trcc-linux) คลาส `LyLcd`)
 
