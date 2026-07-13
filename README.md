@@ -71,6 +71,40 @@ python clock.py --12h --color 0,255,180
 อัปเดตทุกวินาที (การส่งทุก 1 วิ เป็น keepalive ในตัว) · เวลาใช้ฟอนต์ Consolas (ตัวเลขไม่ขยับ)
 วันที่ไทยใช้ Leelawadee UI · แสดงพุทธศักราชเมื่อ `--lang th`
 
+### Clawdmeter dashboard (claw.py)
+
+พอร์ต dashboard ของ [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) มาไว้บนจอ Trofeo —
+มัสคอต **ClaudePix** เด้ง/กระพริบ + เกจ **SESSION / WEEKLY** + reset time + สถานะ
+ดึง usage ของ Claude Code เอง (อ่าน OAuth token จาก `~/.claude/.credentials.json` แล้วยิง API จิ๋ว
+1 token ไป `api.anthropic.com` อ่าน rate-limit headers) — **ไม่ต้องมี BLE/daemon**
+
+```bash
+python claw.py                    # แนวตั้ง 462×1920 ดึง usage จริง + ธงตามคีย์บอร์ด
+python claw.py --landscape        # แนวนอน 1920×462 (มัสคอตซ้าย เกจขวา)
+python claw.py --flip             # แนวตั้งกลับหัว → พลิกด้าน
+python claw.py --demo             # ตัวเลขจำลอง (ไม่แตะ credential)
+python claw.py --preview out.png  # เรนเดอร์ 1 เฟรมเป็น PNG (ไม่ต้องต่อจอ)
+python claw.py --flag th          # บังคับธงไทยตลอด (default = auto ตามคีย์บอร์ด)
+```
+
+- default = **แนวตั้ง** (หมุนเนื้อหา 90° ลงจอ) ตั้งจอขึ้นแล้วอ่านตรง · กลับหัวใช้ `--flip`
+- ไม่มี token / ออฟไลน์ → fallback เป็น demo อัตโนมัติ (มุมล่างขึ้น `DEMO data`)
+- มัสคอต 3 อารมณ์: idle (เด้งตาม usage) · work (ค่าเปลี่ยน) · dance (ทักทาย/สลับภาษา)
+- render ~20fps (เป็น keepalive ในตัว) · ไม่ต้องลง dependency เพิ่ม (ใช้ urllib + pillow) · Ctrl+C ออก
+
+**ธงตามภาษาคีย์บอร์ด** (ฟีเจอร์ `kb` ของ Clawdmeter) — `--flag auto` (default) อ่านภาษา input
+ของหน้าต่างที่ active อยู่ (Windows) แล้วเปลี่ยนธงบนตัวมัสคอตสด ๆ พร้อม badge โชว์โค้ดภาษา:
+
+| ภาษาคีย์บอร์ด | ตัวมัสคอต |
+|---|---|
+| ไทย (TH) | ธงไทย 🇹🇭 |
+| ญี่ปุ่น (JP) | วงกลมแดงกลางตัว 🇯🇵 |
+| ฝรั่งเศส (FR) | น้ำเงิน/ขาว/แดง แนวตั้ง 🇫🇷 |
+| อื่น ๆ (EN, ...) | สีดินเผา (Claude ปกติ) |
+
+สลับภาษาเมื่อไหร่ มัสคอตจะ **เต้นฉลอง ~3 วิ** · บังคับธงเองได้ด้วย `--flag th\|jp\|fr\|clay`
+(เพิ่มธงอื่นได้ที่ `FLAG_DESIGNS` + `flag_color()` ใน `claw.py`)
+
 ### ตัวเลือก
 
 | flag | ความหมาย |
@@ -94,6 +128,7 @@ python clock.py --12h --color 0,255,180
 - **`frame.py`** — แปลงภาพใด ๆ → payload JPEG (fit + หมุน + encode) + `paste_overlay` (แปะภาพเล็กทับ) + ภาพทดสอบ
 - **`send.py`** — โปรแกรม CLI (ภาพนิ่ง/GIF/วิดีโอ + keepalive)
 - **`clock.py`** — นาฬิกา + วันที่ overlay บน wallpaper (อัปเดตทุกวินาที)
+- **`claw.py`** — Clawdmeter dashboard: มัสคอต ClaudePix + เกจ usage ของ Claude Code (ดึงข้อมูลเอง ไม่ต้องมี BLE)
 - **`libusb-1.0.dll`** — backend libusb (64-bit) สำหรับ pyusb
 
 ## เขียนโปรแกรมของตัวเองต่อ
