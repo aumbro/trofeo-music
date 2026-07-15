@@ -1424,10 +1424,15 @@ def main():
     ap.add_argument("--art", metavar="IMG", help="ใช้รูปนี้เป็นปก (ไว้เทสต์ preview/demo)")
     ap.add_argument("--pid", type=lambda s: int(s, 0), default=0x5408)
     args = ap.parse_args()
+    run(args)
 
+
+def run(args, stop_evt=None):
+    """รัน render loop — แยกจาก main() ให้ tray app เรียกได้ + เปลี่ยนโหมด/แนวสด (อ่าน args ทุกเฟรม)"""
     state = MediaState()
     spec = Spectrum()
-    stop_evt = threading.Event()
+    if stop_evt is None:
+        stop_evt = threading.Event()
     art_cache = {"key": None, "assets": None}
 
     def build_snapshot(t):
@@ -1494,20 +1499,29 @@ def main():
         return
 
     # ── start threads ──
+    want_lyrics = args.lyrics or getattr(args, "always_lyrics", False)
     if not args.demo:
-        threading.Thread(target=smtc_poller, args=(state, stop_evt, args.lyrics),
+        threading.Thread(target=smtc_poller, args=(state, stop_evt, want_lyrics),
                          daemon=True).start()
-        log("เริ่ม SMTC poller (now-playing)" + (" + เนื้อเพลง (LRCLIB)" if args.lyrics else ""))
+        log("เริ่ม SMTC poller (now-playing)" + (" + เนื้อเพลง (LRCLIB)" if want_lyrics else ""))
     if not args.demo and not args.no_audio:
         threading.Thread(target=audio_capture,
                          args=(spec, stop_evt, 48000, 2048, args.gain, args.agc),
                          daemon=True).start()
 
-    # ── เปิดจอ ──
+    # ── เปิดจอ (รอจนกว่าจะเสียบ/เปิดได้ — เผื่อ tray เปิดตอนจอยังไม่พร้อม) ──
     from trofeo import TrofeoLCD
     lcd = TrofeoLCD(pid=args.pid)
-    log("เปิด USB + handshake ...")
-    info = lcd.open()
+    info = None
+    while info is None and not stop_evt.is_set():
+        try:
+            log("เปิด USB + handshake ...")
+            info = lcd.open()
+        except Exception as e:
+            log("ยังเปิดจอไม่ได้ (เสียบจอ / ปิด TRCC?):", e, "— รอ 3s")
+            stop_evt.wait(3.0)
+    if info is None:
+        return
     base = info["encode_base"]
     if args.rotate is not None:
         angle = args.rotate
@@ -1535,11 +1549,19 @@ def main():
     gc_next = 20.0
     log(f"เริ่มแสดงผล {args.fps:.0f}fps — Ctrl+C ออก")
     try:
-        while True:
+        while not stop_evt.is_set():
             loop_t = time.time()
             t = loop_t - t0
             dt = t - prev_t
             prev_t = t
+            # เลือก render_fn + มุมหมุน จาก args สด ๆ (เปลี่ยนแนวได้ live จาก tray)
+            render_fn = render_portrait if args.portrait else render
+            if args.rotate is not None:
+                angle = args.rotate
+            elif args.portrait:
+                angle = (base + (270 if args.flip else 90)) % 360
+            else:
+                angle = base
             snap = build_snapshot(t)
             if args.demo:
                 bands = demo_bands(spec.n, t)
