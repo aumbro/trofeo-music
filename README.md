@@ -1,5 +1,9 @@
 # 🎵 vibe.py — Now-Playing + Audio Visualizer
 
+> 🍴 **Fork ของ [iTeRy-Jaturawit/thermalright-trofeo-916](https://github.com/iTeRy-Jaturawit/thermalright-trofeo-916)**
+> — ใช้ไดรเวอร์จอ + โปรโตคอล **LY** ของ upstream (`trofeo.py` / `frame.py`)
+> แล้วเพิ่ม **`vibe.py`** (now-playing + audio visualizer) เป็นของใหม่ในโปรเจกต์นี้
+
 แดชบอร์ดเพลง + visualizer เรียลไทม์สำหรับจอ **Thermalright Trofeo Vision 9.16**
 (จอ USB strip 1920×462) — ดึงเพลงที่เล่นอยู่จาก **Windows SMTC**
 (Spotify / Apple Music / YouTube / อะไรก็ได้ที่คุม media key ได้) + วิเคราะห์เสียงจริงจาก
