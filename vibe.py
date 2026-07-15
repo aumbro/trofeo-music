@@ -35,9 +35,12 @@ import gc
 import math
 import os
 import random
+import re
 import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -130,6 +133,8 @@ class MediaState:
         self.key = None             # (title, artist) ไว้ตรวจว่าเปลี่ยนเพลง
         self.art = None             # ปกอัลบั้ม PIL (crisp) หรือ None
         self.art_key = None
+        self.lyrics = None          # list[(t,line)] เนื้อเพลงซิงค์ หรือ None
+        self.lyrics_key = None
 
     def _extrap(self):
         """ตำแหน่งเวลาปัจจุบันจากนาฬิกาที่เดินเอง (ลื่น)"""
@@ -157,12 +162,17 @@ class MediaState:
         with self.lock:
             self.art, self.art_key = art, art_key
 
+    def set_lyrics(self, lyrics, key):
+        with self.lock:
+            self.lyrics, self.lyrics_key = lyrics, key
+
     def snapshot(self):
         with self.lock:
             return {
                 "title": self.title, "artist": self.artist, "album": self.album,
                 "app": self.app, "playing": self.playing, "have": self.have,
                 "pos": self._extrap(), "dur": self.dur, "art": self.art, "key": self.key,
+                "lyrics": self.lyrics,
             }
 
 
@@ -180,7 +190,67 @@ def _pretty_app(app_id: str) -> str:
     return app_id.split("!")[-1][:14]
 
 
-def smtc_poller(state: MediaState, stop_evt: threading.Event):
+# ── เนื้อเพลงซิงค์เวลา (LRCLIB — ฟรี ไม่ต้อง key) ────────────────────────────
+_LRC_RE = re.compile(r"\[(\d+):(\d{1,2}(?:\.\d+)?)\]")
+
+
+def clean_artist(artist, album):
+    """Apple Music/บาง app ยัด 'Artist — Album' ในช่อง artist → แยกออก"""
+    for sep in (" — ", " – ", " - "):
+        if sep in artist:
+            left, right = artist.split(sep, 1)
+            return left.strip(), (album or right.strip())
+    return artist, album
+
+
+def parse_lrc(text):
+    """LRC → list[(วินาที, บรรทัด)] เรียงตามเวลา (ข้าม tag meta/บรรทัดว่าง)"""
+    out = []
+    for line in text.splitlines():
+        stamps = _LRC_RE.findall(line)
+        if not stamps:
+            continue
+        lyric = _LRC_RE.sub("", line).strip()
+        for mm, ss in stamps:
+            out.append((int(mm) * 60 + float(ss), lyric))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def _lrc_http(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "vibe.py-trofeo (github.com/aumbro/trofeo-music)"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        import json
+        return json.load(r)
+
+
+def fetch_lyrics(title, artist, album, dur):
+    """คืน list[(t,line)] ของเนื้อเพลงซิงค์ หรือ None ถ้าไม่มี (LRCLIB: get เป๊ะ→ search หลวม)"""
+    if not title:
+        return None
+    artist, album = clean_artist(artist, album)
+    try:
+        q = {"track_name": title, "artist_name": artist, "album_name": album,
+             "duration": int(dur)}
+        data = _lrc_http("https://lrclib.net/api/get?" + urllib.parse.urlencode(q))
+    except urllib.error.HTTPError as e:
+        data = None if e.code != 404 else None
+    except Exception:
+        return None
+    if not data:                                      # get ไม่เจอ → search หลวม
+        try:
+            res = _lrc_http("https://lrclib.net/api/search?" + urllib.parse.urlencode(
+                {"track_name": title, "artist_name": artist}))
+            data = next((x for x in res if x.get("syncedLyrics")), None) if res else None
+        except Exception:
+            return None
+    if data and data.get("syncedLyrics"):
+        lines = parse_lrc(data["syncedLyrics"])
+        return lines or None
+    return None
+
+
+def smtc_poller(state: MediaState, stop_evt: threading.Event, want_lyrics=False):
     """thread: อ่าน SMTC ทุก ~0.5s (winsdk เป็น async → รัน event loop ในเธรดนี้)"""
     import asyncio
     from winsdk.windows.media.control import (
@@ -229,6 +299,16 @@ def smtc_poller(state: MediaState, stop_evt: threading.Event):
                 except Exception:
                     art = None
             state.set_art(art, art_key)
+
+        # ดึงเนื้อเพลงใหม่เฉพาะตอนเปลี่ยนเพลง (เฉพาะโหมด --lyrics) — network ใน executor กันบล็อก
+        if want_lyrics and title and art_key != state.lyrics_key:
+            state.set_lyrics(None, art_key)           # เคลียร์ก่อน (โชว์ "กำลังโหลด")
+            try:
+                lines = await asyncio.get_event_loop().run_in_executor(
+                    None, fetch_lyrics, title, artist, album, dur)
+            except Exception:
+                lines = None
+            state.set_lyrics(lines, art_key)
 
     async def run():
         mgr = await MM.request_async()
@@ -673,7 +753,9 @@ def _render_full(snap, img, bands, t, peaks, mascot, accent, viz, have):
     e = getattr(mascot, "energy", 0.28)
     kk = getattr(mascot, "kick", 0.0)
     vy, vh = 6, H - 104                              # โซน viz (เว้นล่างให้แถบ now-playing)
-    if viz == "dots":
+    if snap.get("_lyrics_mode"):
+        draw_lyrics(img, d, 40, vy, W - 80, vh, snap.get("lyrics"), snap["pos"], accent)
+    elif viz == "dots":
         draw_dot_matrix(d, 24, vy, W - 48, vh, bands, peaks, wbase,
                         cols=64, invert=snap.get("_invert", False))
     elif viz == "bars":
@@ -725,14 +807,17 @@ def render(snap, bands, audio_active, t, peaks=None, mascot=None):
         base_hue = 175.0
     d = ImageDraw.Draw(img, "RGBA")
 
-    # ── โหมด --full: viz เต็มจอ (ไม่มีเลย์เอาต์ปกซ้าย) ──
-    if snap.get("_full") and snap.get("_viz") in ("wave", "dots", "bars", "ribbon", "classic"):
-        return _render_full(snap, img, bands, t, peaks, mascot, accent, snap["_viz"], have)
+    # ── โหมด --full: viz/เนื้อเพลง เต็มจอ (ไม่มีเลย์เอาต์ปกซ้าย) ──
+    if snap.get("_full") and (snap.get("_lyrics_mode")
+                              or snap.get("_viz") in ("wave", "dots", "bars", "ribbon", "classic")):
+        return _render_full(snap, img, bands, t, peaks, mascot, accent, snap.get("_viz"), have)
 
     # ── visualizer (วาดก่อน ให้ข้อความอยู่หน้า) — default=แท่งคลาสสิก · --viz เปลี่ยนสไตล์ ──
     span = PANEL_R - PANEL_X
     viz = snap.get("_viz")
-    if viz in ("wave", "dots", "bars", "ribbon", "classic"):
+    if snap.get("_lyrics_mode"):
+        draw_lyrics(img, d, PANEL_X, 184, span, 210, snap.get("lyrics"), snap["pos"], accent)
+    elif viz in ("wave", "dots", "bars", "ribbon", "classic"):
         vx, vy, vh = PANEL_X, 190, 190              # โซน visualizer ฝั่งขวา (กว้าง×สูง)
         wbase = wave_base_hue(art_assets[3] if art_assets else 210.0)
         e = getattr(mascot, "energy", 0.28)
@@ -1156,9 +1241,52 @@ def draw_ribbon_wave(img, x0, y0, w, h, t, bands, energy, base_hue, orient="h", 
     img.paste(acc, (x0, y0), acc)
 
 
+def draw_lyrics(img, d, x0, y0, w, h, lines, pos, accent):
+    """เนื้อเพลงคาราโอเกะ: บรรทัดปัจจุบัน (accent, ใหญ่) กึ่งกลาง, ข้างเคียงจางลง
+    เลื่อน (scroll) แบบ float + ease → บรรทัดไหลขึ้นเนียน ไม่โดดทีละบรรทัด"""
+    cxc = x0 + w / 2
+    big = int(min(54, max(22, w * 0.052 + h * 0.02)))   # อิงความกว้างเป็นหลัก (กันตัดคำ)
+    small = int(big * 0.66)
+    if not lines:
+        d.text((cxc, y0 + h / 2), "♪  ไม่มีเนื้อเพลงซิงค์ (LRCLIB)",
+               font=font(small), fill=C_MUTE, anchor="mm")
+        return
+    idx = 0
+    for i, (tt, _) in enumerate(lines):
+        if tt <= pos:
+            idx = i
+        else:
+            break
+    # scroll เป็น float: ตอนเปลี่ยนบรรทัด ค่อย ๆ ไหลจาก idx-1 → idx ภายใน TRANS วิ (ease-out)
+    TRANS = 0.42
+    t_cur = lines[idx][0]
+    seg = (lines[idx + 1][0] - t_cur) if idx + 1 < len(lines) else 4.0
+    frac = min(1.0, max(0.0, (pos - t_cur) / min(TRANS, max(0.2, seg))))
+    scroll = (idx - 1) + (1.0 - (1.0 - frac) * (1.0 - frac))   # ease-out quad
+    center_j = int(scroll + 0.5)                               # บรรทัดที่ถือว่า "ปัจจุบัน"
+    lh = int(big * 1.5)
+    n = int((h / 2) // lh) + 2
+    cy = y0 + h / 2
+    for j in range(idx - n, idx + n + 1):
+        if j < 0 or j >= len(lines):
+            continue
+        y = cy + (j - scroll) * lh
+        if y < y0 - lh or y > y0 + h + lh:
+            continue
+        txt = lines[j][1] or "♪"
+        if j == center_j:
+            d.text((cxc, y), _fit_text(d, txt, font(big), w - 16),
+                   font=font(big), fill=accent, anchor="mm")
+        else:
+            fade = max(0.28, 1.0 - abs(j - scroll) * 0.30)
+            col = tuple(int(c * fade) for c in (210, 210, 220))
+            d.text((cxc, y), _fit_text(d, txt, font(small, bold=False), w - 16),
+                   font=font(small, bold=False), fill=col, anchor="mm")
+
+
 def render_portrait(snap, bands, audio_active, t, peaks=None, mascot=None):
     """วาด 1 เฟรมแนวตั้ง 462x1920 (mount จอตั้ง):
-    ปกบน → ชื่อเพลง/ศิลปิน → progress → visualizer (wave / dots / bars / ribbon)"""
+    ปกบน → ชื่อเพลง/ศิลปิน → progress → visualizer / เนื้อเพลง (--lyrics)"""
     W, H = PANEL_H, PANEL_W          # 462 กว้าง x 1920 สูง
     MG = 26
     ART_P = W - 2 * MG               # 410
@@ -1224,7 +1352,9 @@ def render_portrait(snap, bands, audio_active, t, peaks=None, mascot=None):
     viz = snap.get("_viz") or "wave"
     e = getattr(mascot, "energy", 0.28)
     kk = getattr(mascot, "kick", 0.0)
-    if viz == "dots":
+    if snap.get("_lyrics_mode"):
+        draw_lyrics(img, d, MG, wy, W - 2 * MG, wh, snap.get("lyrics"), snap["pos"], accent)
+    elif viz == "dots":
         draw_dot_matrix(d, 0, wy, W, wh, bands, peaks, base, invert=snap.get("_invert", False))
     elif viz == "bars":
         draw_mirror_bars(d, 0, wy, W, wh, bands, base, e, orient="v")
@@ -1282,6 +1412,8 @@ def main():
                     help="สเปกตรัม dots กลับหัว: แท่งห้อยจากบน พีคร่วงลงล่าง")
     ap.add_argument("--full", action="store_true",
                     help="แนวนอน: viz เต็มจอ 1920x462 + now-playing แถบเล็กล่าง (ต้องมี --viz)")
+    ap.add_argument("--lyrics", action="store_true",
+                    help="โหมดเนื้อเพลงคาราโอเกะ (ดึงจาก LRCLIB ซิงค์เวลา; ไม่มีเนื้อ→โชว์ viz)")
     ap.add_argument("--no-audio", action="store_true", help="ไม่ capture เสียง (now-playing อย่างเดียว)")
     ap.add_argument("--gain", type=float, default=1.0,
                     help="ความไวเสียง (บน AGC = ปรับ target; --no-agc = gain ตายตัว; default 1.0)")
@@ -1326,6 +1458,7 @@ def main():
         snap["_viz"] = args.viz
         snap["_invert"] = args.invert
         snap["_full"] = args.full
+        snap["_lyrics_mode"] = args.lyrics
         return snap
 
     render_fn = render_portrait if args.portrait else render
@@ -1347,6 +1480,12 @@ def main():
         snap["_viz"] = args.viz
         snap["_invert"] = args.invert
         snap["_full"] = args.full
+        snap["_lyrics_mode"] = args.lyrics
+        if args.lyrics:                              # เนื้อเพลง demo (ไว้ดูหน้าตา)
+            snap["lyrics"] = [(34, "Look at the stars"), (37, "Look how they shine for you"),
+                              (40, "And everything you do"), (43, "Yeah, they were all yellow"),
+                              (46, "I came along"), (49, "I wrote a song for you"),
+                              (52, "And all the things you do")]
         bands = demo_bands(spec.n, t)
         peaks = np.clip(bands + 0.08, 0.0, 0.92)     # ยกยอดให้เห็น cap ลอยเหนือแท่ง
         manim = MascotAnim()
@@ -1359,8 +1498,9 @@ def main():
 
     # ── start threads ──
     if not args.demo:
-        threading.Thread(target=smtc_poller, args=(state, stop_evt), daemon=True).start()
-        log("เริ่ม SMTC poller (now-playing)")
+        threading.Thread(target=smtc_poller, args=(state, stop_evt, args.lyrics),
+                         daemon=True).start()
+        log("เริ่ม SMTC poller (now-playing)" + (" + เนื้อเพลง (LRCLIB)" if args.lyrics else ""))
     if not args.demo and not args.no_audio:
         threading.Thread(target=audio_capture,
                          args=(spec, stop_evt, 48000, 2048, args.gain, args.agc),
