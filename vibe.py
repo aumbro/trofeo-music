@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import argparse
 import io
+import gc
 import math
 import os
+import random
 import sys
 import threading
 import time
@@ -648,6 +650,51 @@ def draw_art_glow(img, ax, ay, size, pad, accent, strength):
     img.paste(glow, (ax - pad, ay - pad), glow)
 
 
+def _render_full(snap, img, bands, t, peaks, mascot, accent, viz, have):
+    """โหมด --full: viz เต็มจอ 1920x462 + now-playing แถบเล็กล่าง"""
+    W, H = PANEL_W, PANEL_H
+    img = Image.blend(img, Image.new("RGB", (W, H), (4, 5, 12)), 0.5)   # มืดลงให้นีออนพุ่ง
+    d = ImageDraw.Draw(img, "RGBA")
+    art_assets = snap.get("_assets")
+    wbase = wave_base_hue(art_assets[3] if art_assets else 210.0)
+    e = getattr(mascot, "energy", 0.28)
+    kk = getattr(mascot, "kick", 0.0)
+    vy, vh = 6, H - 104                              # โซน viz (เว้นล่างให้แถบ now-playing)
+    if viz == "dots":
+        draw_dot_matrix(d, 24, vy, W - 48, vh, bands, peaks, wbase,
+                        cols=64, invert=snap.get("_invert", False))
+    elif viz == "bars":
+        draw_mirror_bars(d, 0, vy, W, vh, bands, wbase, e, orient="h")
+    elif viz == "ribbon":
+        draw_ribbon_wave(img, 0, vy, W, vh, t, bands, e, wbase, orient="h")
+    elif viz == "classic":
+        draw_classic_bars(d, 24, vy, W - 48, vh, bands, peaks, wbase)
+    else:
+        particle_field().draw(img, 0, vy, W, vh, t, bands, e, kk, wbase)
+    # ── แถบ now-playing ล่าง ──
+    d.rectangle([0, H - 96, W, H], fill=(0, 0, 0, 120))
+    if have:
+        tx = 30
+        if art_assets:
+            cov = art_assets[0].resize((66, 66), Image.LANCZOS)
+            img.paste(cov, (28, H - 82), cov)
+            tx = 112
+        draw_marquee(img, d, tx, H - 84, W - tx - 260, snap["title"], font(30),
+                     C_INK, t, speed=55)
+        meta = " · ".join(x for x in (snap["artist"], snap["album"]) if x)
+        if meta:
+            draw_marquee(img, d, tx, H - 44, W - tx - 260, meta, font(22, bold=False),
+                         accent, t, speed=45)
+        pos, dur = snap["pos"], snap["dur"]
+        if dur > 0:
+            d.text((W - 26, H - 56), f"{fmt_time(pos)} / {fmt_time(dur)}",
+                   font=font(24, bold=False), fill=C_MUTE, anchor="rm")
+            frac = max(0.0, min(1.0, pos / dur))
+            d.rectangle([0, H - 6, W, H], fill=C_TRACK)
+            d.rectangle([0, H - 6, int(W * frac), H], fill=accent)
+    return img
+
+
 def render(snap, bands, audio_active, t, peaks=None, mascot=None):
     """วาด 1 เฟรม landscape 1920x462 คืน PIL.Image
     peaks=ยอดค้างของแต่ละแท่ง · mascot=MascotAnim โชว์ ClaudePix แทนปก (หรือ None)"""
@@ -665,33 +712,52 @@ def render(snap, bands, audio_active, t, peaks=None, mascot=None):
         base_hue = 175.0
     d = ImageDraw.Draw(img, "RGBA")
 
-    # ── สเปกตรัม (วาดก่อน ให้ข้อความอยู่หน้า) ──
-    n = len(bands)
+    # ── โหมด --full: viz เต็มจอ (ไม่มีเลย์เอาต์ปกซ้าย) ──
+    if snap.get("_full") and snap.get("_viz") in ("wave", "dots", "bars", "ribbon", "classic"):
+        return _render_full(snap, img, bands, t, peaks, mascot, accent, snap["_viz"], have)
+
+    # ── visualizer (วาดก่อน ให้ข้อความอยู่หน้า) — default=แท่งคลาสสิก · --viz เปลี่ยนสไตล์ ──
     span = PANEL_R - PANEL_X
-    gap = 4
-    bw = (span - gap * (n - 1)) / n
-    for i in range(n):
-        mag = float(bands[i])
-        h = int(BAR_MAX * mag)
-        x0 = PANEL_X + i * (bw + gap)
-        x1 = x0 + bw
-        col = band_color(i / max(1, n - 1), mag, base_hue)
-        # แท่ง (โปร่งแสงเล็กน้อยให้กลืนพื้น)
-        d.rounded_rectangle([x0, SPEC_BASE - h, x1, SPEC_BASE],
-                            radius=int(bw / 2), fill=col + (235,))
-        # แสงสะท้อนใต้ฐาน (mirror จาง ๆ)
-        rh = h // 3
-        if rh > 1:
-            d.rectangle([x0, SPEC_BASE + 2, x1, SPEC_BASE + 2 + rh],
-                        fill=col + (40,))
-        # peak cap: ขีดที่ยอด (เด้งขึ้นตามแท่ง แล้วค่อย ๆ ตกลง)
-        if peaks is not None:
-            ph = int(BAR_MAX * float(peaks[i]))
-            if ph > 2:
-                cap_y = SPEC_BASE - ph
-                cap_col = _lerp(col, (255, 255, 255), 0.6)
-                d.rounded_rectangle([x0, cap_y - 4, x1, cap_y], radius=2,
-                                    fill=cap_col + (255,))
+    viz = snap.get("_viz")
+    if viz in ("wave", "dots", "bars", "ribbon", "classic"):
+        vx, vy, vh = PANEL_X, 190, 190              # โซน visualizer ฝั่งขวา (กว้าง×สูง)
+        wbase = wave_base_hue(art_assets[3] if art_assets else 210.0)
+        e = getattr(mascot, "energy", 0.28)
+        kk = getattr(mascot, "kick", 0.0)
+        if viz == "dots":
+            draw_dot_matrix(d, vx, vy, span, vh, bands, peaks, wbase,
+                            cols=48, invert=snap.get("_invert", False))
+        elif viz == "bars":
+            draw_mirror_bars(d, vx, vy, span, vh, bands, wbase, e, orient="h")
+        elif viz == "ribbon":
+            draw_ribbon_wave(img, vx, vy, span, vh, t, bands, e, wbase, orient="h")
+        elif viz == "classic":
+            draw_classic_bars(d, vx, vy, span, vh, bands, peaks, wbase)
+        else:
+            particle_field().draw(img, vx, vy, span, vh, t, bands, e, kk, wbase)
+    else:
+        n = len(bands)
+        gap = 4
+        bw = (span - gap * (n - 1)) / n
+        for i in range(n):
+            mag = float(bands[i])
+            h = int(BAR_MAX * mag)
+            x0 = PANEL_X + i * (bw + gap)
+            x1 = x0 + bw
+            col = band_color(i / max(1, n - 1), mag, base_hue)
+            d.rounded_rectangle([x0, SPEC_BASE - h, x1, SPEC_BASE],
+                                radius=int(bw / 2), fill=col + (235,))
+            rh = h // 3
+            if rh > 1:
+                d.rectangle([x0, SPEC_BASE + 2, x1, SPEC_BASE + 2 + rh],
+                            fill=col + (40,))
+            if peaks is not None:
+                ph = int(BAR_MAX * float(peaks[i]))
+                if ph > 2:
+                    cap_y = SPEC_BASE - ph
+                    cap_col = _lerp(col, (255, 255, 255), 0.6)
+                    d.rounded_rectangle([x0, cap_y - 4, x1, cap_y], radius=2,
+                                        fill=cap_col + (255,))
 
     # ── ปกอัลบั้ม / มัสคอต ClaudePix (glow ขอบเต้นตามบีตก่อน) ──
     force_m = snap.get("_force_mascot")
@@ -774,17 +840,317 @@ def render(snap, bands, audio_active, t, peaks=None, mascot=None):
     return img
 
 
+# ── เส้นเสียงแบบ particle wave (ริบบิ้นจุดไหลลื่น ไล่สี — สไตล์ภาพอ้างอิง) ──────
+class ParticleField:
+    """สนามอนุภาคไหลลื่นหลายเลนคลื่นนอน จุดกระจายรอบเส้น (gaussian → หนาแน่นกลาง)
+    reactive: amplitude/เลน จาก spectrum · การฟุ้ง จาก energy · brightness พรึบ จาก kick
+    สุ่ม param ครั้งเดียว (seed คงที่) แล้ว flow ตาม t → ไม่กระพริบมั่ว"""
+
+    def __init__(self, n=220, lanes=4):
+        rng = np.random.default_rng(7)
+        self.n, self.lanes = n, lanes
+        self.lane = rng.integers(0, lanes, n)
+        self.fx0 = rng.random(n).astype(np.float32)
+        self.perp = rng.normal(0.0, 1.0, n).astype(np.float32)     # ระยะตั้งฉากเส้น
+        self.size = rng.uniform(1.0, 3.4, n).astype(np.float32)
+        self.bph = rng.uniform(0.0, 6.283, n).astype(np.float32)   # เฟส twinkle
+        self.spd = rng.uniform(0.75, 1.25, n).astype(np.float32)   # ความเร็วไหลต่างกัน
+
+    def draw(self, img, x0, y0, w, h, t, bands, energy, kick, base_hue):
+        # คอขวด = จำนวนครั้งเรียก ellipse → จำกัดจำนวนจุด + วาดวงเดียว (halo เฉพาะจุดสว่างจัด)
+        d = ImageDraw.Draw(img, "RGBA")
+        L, nb = self.lanes, len(bands)
+        amp = []
+        for li in range(L):
+            seg = bands[li * nb // L:(li + 1) * nb // L]
+            m = float(seg.mean()) if len(seg) else 0.0
+            amp.append((h / L) * 0.34 * (0.25 + 1.1 * m + 0.5 * energy))
+        spread = 20.0 + 62.0 * energy
+        for i in range(self.n):
+            li = int(self.lane[i])
+            fx = (self.fx0[i] + t * 0.05 * self.spd[i]) % 1.0
+            b = 0.45 + 0.55 * math.sin(t * 2.0 + self.bph[i])
+            b = min(1.0, max(0.0, b) + kick * 0.4)
+            if b < 0.12:                                   # ข้ามจุดจาง (ลดจำนวนวาด)
+                continue
+            px = x0 + fx * w
+            wave = (math.sin(fx * 9.4 + t * (0.7 + 0.16 * li) + li * 1.7) * 0.6
+                    + math.sin(fx * 4.1 - t * 0.9 + li) * 0.4)
+            py = y0 + h * (li + 0.5) / L + wave * amp[li] + self.perp[i] * spread
+            sz = self.size[i] * (0.7 + 0.9 * b)            # ใหญ่ขึ้นเล็กน้อยให้ดูฟุ้ง
+            col = _hsv(base_hue + fx * WAVE_SPAN, 0.78, 0.55 + 0.45 * b)
+            if b > 0.6:                                    # halo เฉพาะจุดสว่างจัด (น้อยครั้ง)
+                d.ellipse([px - sz * 2.3, py - sz * 2.3, px + sz * 2.3, py + sz * 2.3],
+                          fill=col + (int(50 * b),))
+            d.ellipse([px - sz, py - sz, px + sz, py + sz], fill=col + (int(235 * b),))
+
+
+WAVE_HUE = 186.0            # พาเลตนีออนอ้างอิง: cyan(186) → น้ำเงิน → ม่วง → ชมพู(336)
+WAVE_SPAN = 150.0           # ความกว้าง gradient (องศา)
+_PFIELD = None
+_WAVE_DARK = None
+
+
+def wave_base_hue(accent_hue):
+    """คืน base hue ของ arc สวย ที่ 'เอียงไปหาสีปก' บางส่วน — ธีมตามปกแต่ไม่หลุดโซนหม่น
+    (arc นีออน center ~261° หมุนเข้าหา accent 55% แล้วยังกวาด +WAVE_SPAN ต่อ)"""
+    center = WAVE_HUE + WAVE_SPAN / 2.0           # ~261
+    d = ((accent_hue - center + 180) % 360) - 180  # ผลต่างสั้นสุด (มีเครื่องหมาย)
+    return WAVE_HUE + d * 0.55
+
+
+_PWAVE_COL: dict = {}
+
+
+def _pwave_colmap(w2, base_hue):
+    """colormap ไล่ hue ตามคอลัมน์ (w2,3) สำหรับ particle raster — cache ต่อ (w2,hue)"""
+    key = (w2, round(base_hue))
+    if key not in _PWAVE_COL:
+        xs = np.linspace(0.0, 1.0, w2)
+        _PWAVE_COL[key] = np.array([_hsv(base_hue + f * WAVE_SPAN, 0.78, 0.98) for f in xs],
+                                   dtype=np.uint8)
+    return _PWAVE_COL[key]
+
+
+def particle_field():
+    global _PFIELD
+    if _PFIELD is None:
+        _PFIELD = ParticleField()
+    return _PFIELD
+
+
+def wave_darken(w, h):
+    """overlay นาวีเข้ม ไล่จางบน→เข้มล่าง (ให้นีออนพุ่งแบบภาพอ้างอิง) — cache"""
+    global _WAVE_DARK
+    if _WAVE_DARK is None:
+        arr = np.zeros((h, w, 4), dtype=np.uint8)
+        arr[..., 0], arr[..., 1], arr[..., 2] = 8, 10, 26
+        arr[..., 3] = np.linspace(70, 185, h).astype(np.uint8)[:, None]
+        _WAVE_DARK = Image.fromarray(arr, "RGBA")
+    return _WAVE_DARK
+
+
+# ── ดอตกริดสเปกตรัม (LED matrix — คอลัมน์พิกเซลสี่เหลี่ยมซ้อน ไล่สีรุ้ง) ──────
+def draw_classic_bars(d, x0, y0, w, h, bands, peaks, base_hue):
+    """แท่งคลาสสิก: ยืนบนฐาน + เงาสะท้อนจาง ๆ ใต้ฐาน + peak cap (region-based ใช้ได้ทุกแนว)"""
+    n = len(bands)
+    gap = max(2, int(w / n * 0.18))
+    bw = (w - gap * (n - 1)) / n
+    base = y0 + h * 0.72                          # ฐาน (เว้นล่าง ~28% ให้เงาสะท้อน)
+    barmax = base - y0
+    refl_max = int(h * 0.26)
+    for i in range(n):
+        mag = float(bands[i])
+        bh = int(barmax * mag)
+        bx0 = x0 + i * (bw + gap)
+        bx1 = bx0 + bw
+        col = band_color(i / max(1, n - 1), mag, base_hue)
+        d.rounded_rectangle([bx0, base - bh, bx1, base], radius=int(bw / 2), fill=col + (235,))
+        rh = min(int(bh * 0.5), refl_max)         # เงาสะท้อน
+        if rh > 1:
+            d.rectangle([bx0, base + 2, bx1, base + 2 + rh], fill=col + (45,))
+        if peaks is not None:
+            ph = int(barmax * float(peaks[i]))
+            if ph > 2:
+                cy = base - ph
+                d.rounded_rectangle([bx0, cy - 4, bx1, cy], radius=2,
+                                    fill=_lerp(col, (255, 255, 255), 0.6) + (255,))
+
+
+def _rebin(a, n):
+    """เฉลี่ย array ให้เหลือ n ช่อง (60 bands → n คอลัมน์)"""
+    a = np.asarray(a, dtype=np.float32)
+    if len(a) == n:
+        return a
+    idx = np.linspace(0, len(a), n + 1).astype(int)
+    return np.array([a[idx[i]:max(idx[i] + 1, idx[i + 1])].mean() for i in range(n)],
+                    dtype=np.float32)
+
+
+class PeakDrops:
+    """หยดพีคแบบแรงโน้มถ่วง (สำหรับ inverted): spawn หยดใหม่ที่ปลายแท่งเรื่อย ๆ ขณะเล่น
+    แต่ละหยดร่วงลงอิสระเร่งความเร็ว → มีหลายหยดร่วงพร้อมกันต่อคอลัมน์ (สายหยด)"""
+
+    def __init__(self, g=2.2, spawn_gap=0.14, cap=400):
+        self.g, self.spawn_gap, self.cap = g, spawn_gap, cap
+        self.drops = []              # [col, pos, vel]
+        self.cd = None               # cooldown spawn ต่อคอลัมน์
+        self.prev = None
+
+    def update(self, cols, mag, dt=0.033):
+        if self.cd is None or len(self.cd) != cols:
+            self.cd = np.zeros(cols, np.float32)
+            self.prev = np.zeros(cols, np.float32)
+        self.cd -= dt
+        for c in range(cols):
+            m = float(mag[c])
+            # spawn หยดใหม่ที่ปลายแท่งเมื่อแท่งสูงพอ + พ้น cooldown (สายหยดต่อเนื่อง)
+            # หรือเมื่อแท่งพุ่งขึ้น (rising edge = จังหวะบีต) ให้หยดทันที
+            rising = m > self.prev[c] + 0.05
+            if m > 0.1 and (self.cd[c] <= 0 or rising) and len(self.drops) < self.cap:
+                self.drops.append([c, m, 0.0])
+                self.cd[c] = self.spawn_gap
+            self.prev[c] = m
+        alive = []
+        for dp in self.drops:
+            dp[2] += self.g * dt      # เร่งความเร็ว
+            dp[1] += dp[2] * dt
+            if dp[1] < 1.0:
+                alive.append(dp)
+        self.drops = alive
+        return self.drops
+
+
+_PEAKDROPS = None
+
+
+def peak_drops():
+    global _PEAKDROPS
+    if _PEAKDROPS is None:
+        _PEAKDROPS = PeakDrops()
+    return _PEAKDROPS
+
+
+def draw_dot_matrix(d, x0, y0, w, h, bands, peaks, base_hue, cols=18, invert=False):
+    """สเปกตรัมแบบ LED matrix: แต่ละคอลัมน์ = ย่านความถี่, ก่อพิกเซลสี่เหลี่ยมตาม mag
+    ไล่ hue ตามคอลัมน์ (รุ้ง-ตามปก) + peak cap (ขาว) ตกช้า
+    invert=True → กลับหัว: แท่งห้อยจากบนลงล่าง, พีคร่วงลงล่าง"""
+    cell = w / cols
+    pad = cell * 0.15
+    cw = cell - 2 * pad
+    rows = int(h / cell)
+    cm = _rebin(bands, cols)
+    pk = _rebin(peaks, cols) if peaks is not None else cm
+    drops = peak_drops().update(cols, cm) if invert else None  # หยดพีคหลายลูก (invert)
+    for c in range(cols):
+        lit = int(round(float(cm[c]) * rows))
+        hue = base_hue + (c / max(1, cols - 1)) * 210.0
+        cx = x0 + c * cell + pad
+        for r in range(lit):
+            cyt = (y0 + r * cell + pad) if invert else (y0 + h - (r + 1) * cell + pad)
+            v = 0.5 + 0.5 * (r / rows)
+            d.rectangle([cx, cyt, cx + cw, cyt + cw], fill=_hsv(hue, 0.85, v) + (240,))
+        if not invert:                                # peak-hold ปกติ (เด้งขึ้น ตกช้า)
+            pr = int(round(float(pk[c]) * rows))
+            if 0 < pr <= rows:
+                cyt = y0 + h - pr * cell + pad
+                cap = _lerp(_hsv(hue, 0.85, 1.0), (255, 255, 255), 0.55)
+                d.rectangle([cx, cyt, cx + cw, cyt + cw], fill=cap + (255,))
+    if invert:                                        # หยดพีคร่วงลง — วาดเฉพาะตอนพ้นปลายแท่ง (ไม่ทับแท่ง)
+        for col, pos, _v in drops:
+            if pos <= float(cm[col]) + 0.5 / rows:    # ยังอยู่ในแท่ง → ข้าม (ดันให้โผล่ใต้แท่ง)
+                continue
+            pr = int(round(pos * rows))
+            if 0 < pr <= rows:
+                hue = base_hue + (col / max(1, cols - 1)) * 210.0
+                cx = x0 + col * cell + pad
+                cyt = y0 + (pr - 1) * cell + pad
+                cap = _lerp(_hsv(hue, 0.85, 1.0), (255, 255, 255), 0.55)
+                d.rectangle([cx, cyt, cx + cw, cyt + cw], fill=cap + (255,))
+
+
+# ── waveform มิเรอร์ (เส้นบางยื่นซ้าย-ขวารอบเส้นกลางเรืองแสง — สไตล์ภาพอ้างอิง) ──
+_BAR_NBARS = 100
+_BAR_NOISE = np.random.default_rng(11).uniform(0.5, 1.0, _BAR_NBARS).astype(np.float32)
+
+
+def _sample(a, f):
+    """สุ่มค่าจาก array ที่ตำแหน่ง f (0..1) แบบ interpolate"""
+    x = f * (len(a) - 1)
+    i = int(x)
+    if i + 1 < len(a):
+        return float(a[i] * (1 - (x - i)) + a[i + 1] * (x - i))
+    return float(a[i])
+
+
+def draw_mirror_bars(d, x0, y0, w, h, bands, base_hue, energy, orient="v"):
+    """waveform เส้นบางมิเรอร์รอบเส้นกลางที่เรืองแสง — ความยาว=สเปกตรัม×noise (สไปก์)
+    orient 'v'=เส้นกลางตั้ง บาร์ยื่นซ้าย-ขวา (แนวตั้ง) · 'h'=เส้นกลางนอน บาร์ตั้งขึ้น-ลง (แนวนอน)"""
+    n = _BAR_NBARS
+    tint = _hsv(base_hue + 75.0, 0.35, 1.0)              # ขาวอมสีของเส้นกลาง
+    if orient == "h":
+        cy = y0 + h / 2
+        step = w / n
+        bt = max(1.0, step * 0.5)
+        maxlen = h * 0.46
+        for i in range(n):
+            x = x0 + (i + 0.5) * step
+            f = i / (n - 1)
+            mag = _sample(bands, f) * _BAR_NOISE[i]
+            ln = maxlen * (0.04 + min(1.0, mag) * (0.55 + 0.45 * energy))
+            col = _hsv(base_hue + f * 150.0, 0.85, 0.55 + 0.45 * min(1.0, mag))
+            d.rectangle([x - bt / 2, cy - ln, x + bt / 2, cy + ln], fill=col + (235,))
+        for hw, a in ((9, 40), (4, 110), (1.5, 235)):    # เส้นกลางนอนเรืองแสง
+            d.rectangle([x0, cy - hw, x0 + w, cy + hw], fill=tint + (a,))
+    else:
+        cx = x0 + w / 2
+        step = h / n
+        bt = max(1.0, step * 0.5)
+        maxlen = w * 0.46
+        for i in range(n):
+            y = y0 + (i + 0.5) * step
+            f = i / (n - 1)
+            mag = _sample(bands, f) * _BAR_NOISE[i]
+            ln = maxlen * (0.04 + min(1.0, mag) * (0.55 + 0.45 * energy))
+            col = _hsv(base_hue + f * 150.0, 0.85, 0.55 + 0.45 * min(1.0, mag))
+            d.rectangle([cx - ln, y - bt / 2, cx + ln, y + bt / 2], fill=col + (235,))
+        for hw, a in ((9, 40), (4, 110), (1.5, 235)):    # เส้นกลางตั้งเรืองแสง
+            d.rectangle([cx - hw, y0, cx + hw, y0 + h], fill=tint + (a,))
+
+
+# ── ribbon wave (คลื่นริบบิ้นโปร่งแสงซ้อนกัน gradient — สไตล์ภาพอ้างอิง) ──────────
+_RIBBON_G: dict = {}
+
+
+def _ribbon_grad(n, hue):
+    """gradient สีของริบบิ้น (n ค่าตามแกน amplitude) — cache ต่อ (n,hue)"""
+    key = (n, round(hue))
+    if key not in _RIBBON_G:
+        vs = np.linspace(0.92, 0.58, n)
+        _RIBBON_G[key] = np.array([_hsv(hue, 0.62, float(v)) for v in vs], dtype=np.uint8)
+    return _RIBBON_G[key]
+
+
+def draw_ribbon_wave(img, x0, y0, w, h, t, bands, energy, base_hue, orient="h", ribs=4):
+    """คลื่นริบบิ้นโปร่งแสงซ้อนกัน (สมมาตรรอบเส้นกลาง) — overlap แล้วสีผสมกันเนียน
+    เรนเดอร์ที่ความละเอียดต่ำ (SC) แล้วขยาย — ริบบิ้นเนียน upscale ไม่เสียรูป (เร็วกว่า ~6x)
+    orient 'h'=เส้นกลางนอน (แนวนอน, เหมือนภาพ) · 'v'=เส้นกลางตั้ง (แนวตั้ง)"""
+    SC = 0.32
+    w2, h2 = max(6, int(w * SC)), max(6, int(h * SC))
+    if orient == "h":
+        flow, amp_n, cc = w2, h2, h2 / 2.0
+    else:
+        flow, amp_n, cc = h2, w2, w2 / 2.0
+    fs = np.linspace(0.0, 1.0, flow, dtype=np.float32)
+    window = (0.5 - 0.5 * np.cos(2 * np.pi * fs)) ** 0.55            # กลางสูง ปลายเรียว
+    bandv = np.interp(fs, np.linspace(0, 1, len(bands)), np.asarray(bands, np.float32))
+    perp = np.abs(np.arange(amp_n, dtype=np.float32) - cc)
+    maxamp = amp_n * 0.46
+    acc = Image.new("RGBA", (w2, h2), (0, 0, 0, 0))
+    for r in range(ribs):
+        detail = 0.55 + 0.45 * np.sin(fs * (5 + 2 * r) * np.pi + t * (0.5 + 0.2 * r) + r * 1.7)
+        H = maxamp * (0.12 + 0.88 * window) * detail * (0.32 + 0.85 * bandv + 0.5 * energy)
+        H = np.clip(H, 2.0, amp_n * 0.5).astype(np.float32)
+        A = np.clip((H[None, :] - perp[:, None]) / 5.0, 0.0, 1.0) * 0.42   # (amp_n, flow)
+        hue = base_hue + (r / max(1, ribs - 1)) * 110.0
+        grad = _ribbon_grad(amp_n, hue)
+        rgba = np.dstack([np.broadcast_to(grad[:, None, :], (amp_n, flow, 3)),
+                          (A * 255).astype(np.uint8)])
+        if orient == "v":
+            rgba = np.transpose(rgba, (1, 0, 2))         # (amp_n,flow) → (h2,w2)
+        acc = Image.alpha_composite(acc, Image.fromarray(rgba, "RGBA"))
+    acc = acc.resize((w, h), Image.BILINEAR)
+    img.paste(acc, (x0, y0), acc)
+
+
 def render_portrait(snap, bands, audio_active, t, peaks=None, mascot=None):
     """วาด 1 เฟรมแนวตั้ง 462x1920 (mount จอตั้ง):
-    ปกบน → ชื่อเพลง/ศิลปิน → progress → ClaudePix เต้นตามบีต → สเปกตรัมล่าง"""
+    ปกบน → ชื่อเพลง/ศิลปิน → progress → visualizer (wave / dots / bars / ribbon)"""
     W, H = PANEL_H, PANEL_W          # 462 กว้าง x 1920 สูง
     MG = 26
     ART_P = W - 2 * MG               # 410
     ax, ay = MG, 40
     title_y, meta_y, prog_y = 498, 574, 648
-    mfoot, mcell = 1240, 20          # ClaudePix ยืน/ขนาดเซล
-    spec_base, spec_top = 1884, 1300
-    barmax = spec_base - spec_top
 
     art_assets = snap.get("_assets")
     have = snap["have"] and (snap["title"] or snap["artist"])
@@ -837,34 +1203,24 @@ def render_portrait(snap, bands, audio_active, t, peaks=None, mascot=None):
         d.text((W / 2, prog_y + 26), f"{fmt_time(pos)} / {fmt_time(dur)}",
                font=font(24, bold=False), fill=C_MUTE, anchor="mt")
 
-    # ── ClaudePix เต้นตามบีต (กลางจอ) ──
-    if mascot is not None:
-        draw_mascot(d, W // 2, mfoot, mcell, mascot, accent)
-
-    # ── สเปกตรัมล่าง (รวม 60→30 แท่งให้อ้วนขึ้นพอดีจอแคบ) ──
-    pb, pk = bands, peaks
-    if len(bands) % 2 == 0:
-        pb = bands.reshape(-1, 2).mean(1)
-        if peaks is not None:
-            pk = peaks.reshape(-1, 2).mean(1)
-    n = len(pb)
-    gap = 5
-    span = W - 2 * MG
-    bw = (span - gap * (n - 1)) / n
-    for i in range(n):
-        mag = float(pb[i])
-        h = int(barmax * mag)
-        x0 = MG + i * (bw + gap)
-        x1 = x0 + bw
-        col = band_color(i / max(1, n - 1), mag, base_hue)
-        d.rounded_rectangle([x0, spec_base - h, x1, spec_base],
-                            radius=int(bw / 2), fill=col + (235,))
-        if pk is not None:
-            ph = int(barmax * float(pk[i]))
-            if ph > 2:
-                cy = spec_base - ph
-                d.rounded_rectangle([x0, cy - 5, x1, cy], radius=2,
-                                    fill=_lerp(col, (255, 255, 255), 0.6) + (255,))
+    # ── visualizer ล่าง (บนนาวีเข้มให้สีพุ่ง) — เลือก particle wave / dot matrix ──
+    wy, wh = 712, 1180
+    img.paste(wave_darken(W, wh), (0, wy), wave_darken(W, wh))
+    a_hue = art_assets[3] if art_assets else 210.0              # ธีมสีตามปก (fallback เย็น)
+    base = wave_base_hue(a_hue)
+    viz = snap.get("_viz") or "wave"
+    e = getattr(mascot, "energy", 0.28)
+    kk = getattr(mascot, "kick", 0.0)
+    if viz == "dots":
+        draw_dot_matrix(d, 0, wy, W, wh, bands, peaks, base, invert=snap.get("_invert", False))
+    elif viz == "bars":
+        draw_mirror_bars(d, 0, wy, W, wh, bands, base, e, orient="v")
+    elif viz == "ribbon":
+        draw_ribbon_wave(img, 0, wy, W, wh, t, bands, e, base, orient="v")
+    elif viz == "classic":
+        draw_classic_bars(d, MG, wy, W - 2 * MG, wh, bands, peaks, base)
+    else:
+        particle_field().draw(img, 0, wy, W, wh, t, bands, e, kk, base)
     return img
 
 
@@ -904,6 +1260,15 @@ def main():
                     help="ปิดประกายวิบวับบนปก")
     ap.add_argument("--no-glow", dest="glow", action="store_false",
                     help="ปิดขอบปกเรืองแสงเต้นตามบีต")
+    ap.add_argument("--viz", choices=["wave", "dots", "bars", "ribbon", "classic", "random"],
+                    default=None,
+                    help="visualizer: wave=particle, dots=LED matrix, bars=waveform มิเรอร์, "
+                         "ribbon=คลื่นริบบิ้นโปร่งแสง, classic=แท่งมีเงาสะท้อน, random=สุ่มสลับ "
+                         "(แนวตั้ง default=wave, แนวนอน default=classic)")
+    ap.add_argument("--invert", action="store_true",
+                    help="สเปกตรัม dots กลับหัว: แท่งห้อยจากบน พีคร่วงลงล่าง")
+    ap.add_argument("--full", action="store_true",
+                    help="แนวนอน: viz เต็มจอ 1920x462 + now-playing แถบเล็กล่าง (ต้องมี --viz)")
     ap.add_argument("--no-audio", action="store_true", help="ไม่ capture เสียง (now-playing อย่างเดียว)")
     ap.add_argument("--rotate", type=int, default=None, choices=[0, 90, 180, 270],
                     help="บังคับมุมหมุน wire เอง (ถ้าจอกลับหัว/ตะแคง)")
@@ -941,6 +1306,9 @@ def main():
             snap["_force_mascot"] = True
         snap["_sparkle"] = args.sparkle
         snap["_glow"] = args.glow
+        snap["_viz"] = args.viz
+        snap["_invert"] = args.invert
+        snap["_full"] = args.full
         return snap
 
     render_fn = render_portrait if args.portrait else render
@@ -959,6 +1327,9 @@ def main():
             snap["_force_mascot"] = True
         snap["_sparkle"] = args.sparkle
         snap["_glow"] = args.glow
+        snap["_viz"] = args.viz
+        snap["_invert"] = args.invert
+        snap["_full"] = args.full
         bands = demo_bands(spec.n, t)
         peaks = np.clip(bands + 0.08, 0.0, 0.92)     # ยกยอดให้เห็น cap ลอยเหนือแท่ง
         manim = MascotAnim()
@@ -998,6 +1369,14 @@ def main():
     beat = Beat()
     manim = MascotAnim()
     prev_t = 0.0
+    # โหมด --viz random: สุ่มสลับสไตล์ทุก ~8-14 วิ (มี dots-inv = กลับหัว gravity-drops)
+    RVIZ = ["wave", "dots", "dots-inv", "bars", "ribbon", "classic"]
+    rnd_viz = random.choice(RVIZ)
+    rnd_next = 10.0
+    if args.viz == "random":
+        log(f"โหมด random — สุ่มสลับ visualizer (เริ่ม {rnd_viz})")
+    gc.disable()                          # กัน GC pause กลางลูป (กระตุก) — เก็บเองเป็นระยะ
+    gc_next = 20.0
     log(f"เริ่มแสดงผล {args.fps:.0f}fps — Ctrl+C ออก")
     try:
         while True:
@@ -1014,9 +1393,21 @@ def main():
             peaks = np.maximum(bands, peaks - peak_fall)   # เด้งขึ้นทันที ตกช้า
             energy, kick = beat.update(bands)              # บีตจากเบส
             manim.step(energy, kick, dt)                   # → เต้นลื่น (สะสมเฟส+smooth)
+            if args.viz == "random":                       # สุ่มสลับสไตล์
+                if t >= rnd_next:
+                    rnd_viz = random.choice([v for v in RVIZ if v != rnd_viz])
+                    rnd_next = t + random.uniform(8.0, 14.0)
+                    log(f"random → {rnd_viz}")
+                if rnd_viz == "dots-inv":                   # กลับหัว gravity-drops
+                    snap["_viz"], snap["_invert"] = "dots", True
+                else:
+                    snap["_viz"] = rnd_viz
             canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
             wire = to_wire(canvas, info["width"], info["height"], angle)
             lcd.send_jpeg(to_jpeg(wire, args.quality))
+            if t >= gc_next:                  # เก็บขยะเป็นระยะ (ครั้งเดียว/20s) แทน GC อัตโนมัติ
+                gc.collect()
+                gc_next = t + 20.0
             dt = period - (time.time() - loop_t)
             if dt > 0:
                 time.sleep(dt)
