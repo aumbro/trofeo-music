@@ -277,8 +277,10 @@ def _band_edges(n, sr, fft_n, fmin=40.0, fmax=16000.0):
     return idx
 
 
-def audio_capture(spec: Spectrum, stop_evt: threading.Event, sr=48000, fft_n=2048):
-    """thread: record loopback ต่อเนื่อง → FFT → band magnitudes (attack เร็ว decay ช้า)"""
+def audio_capture(spec: Spectrum, stop_evt: threading.Event, sr=48000, fft_n=2048,
+                  gain=1.0, agc=True):
+    """thread: record loopback ต่อเนื่อง → FFT → band magnitudes (attack เร็ว decay ช้า)
+    gain = ตัวคูณความไว · agc = auto-gain (ยอดดังสุด→~0.85 อัตโนมัติไม่ว่าเพลงดัง/เบา)"""
     import warnings
     import soundcard as sc
     # WASAPI loopback แจ้ง "data discontinuity" บ่อยตอนมีช่วงเงียบ/บัฟเฟอร์สะดุด — ไม่อันตราย ปิดไว้
@@ -289,6 +291,11 @@ def audio_capture(spec: Spectrum, stop_evt: threading.Event, sr=48000, fft_n=204
     ring = np.zeros(fft_n, dtype=np.float32)
     smoothed = np.zeros(spec.n, dtype=np.float32)
     ATTACK, DECAY = 0.55, 0.16     # ขึ้นเร็ว ตกช้า (นุ่มตา)
+    tilt = np.linspace(1.0, 1.5, spec.n).astype(np.float32)  # ชดเชยย่านสูง (พลังงานน้อย)
+    # ── AGC state ──
+    agc_ref = 0.5                  # ระดับอ้างอิงยอด (ค่อย ๆ ปรับตามเพลง)
+    AGC_TARGET = 0.85              # อยากให้ยอดดังสุดขึ้นไปแตะ ~นี้
+    AGC_MIN, AGC_MAX = 0.35, 9.0   # จำกัดช่วง auto-gain (กันบูสต์เว่อร์)
 
     def open_recorder():
         spk = sc.default_speaker()
@@ -312,13 +319,19 @@ def audio_capture(spec: Spectrum, stop_evt: threading.Event, sr=48000, fft_n=204
                         lo, hi = edges[i], max(edges[i] + 1, edges[i + 1])
                         raw[i] = spectrum[lo:hi].mean()
 
-                    # log-compress + normalize ให้ตาดูสมส่วน (เผื่อ headroom กันชนเพดาน)
-                    mag = np.log1p(raw * 5.0)
-                    mag = np.clip(mag / 5.6, 0.0, 1.0)
-                    # ชดเชยความถี่สูงที่พลังงานน้อย (tilt เบาลงกันย่านสูงอิ่มตัว)
-                    tilt = np.linspace(1.0, 1.5, spec.n).astype(np.float32)
-                    # เพดานที่ 0.92 → บาร์ดังสุดยังเหลือช่องว่างด้านบนเสมอ
-                    mag = np.clip(mag * tilt, 0.0, 1.0) * 0.92
+                    # log-compress + normalize + tilt
+                    mag = np.clip(np.log1p(raw * 5.0) / 5.6, 0.0, 1.0)
+                    pre = mag * tilt                        # ก่อนปรับ gain (ยอด ~0..1.5)
+                    peak = float(pre.max())
+                    if agc:
+                        # AGC: ref ตามยอด (ดังขึ้น=ไว, เบาลง=ช้า) → auto-gain ให้ยอด→~TARGET
+                        rate = 0.30 if peak > agc_ref else 0.010
+                        agc_ref += (peak - agc_ref) * rate
+                        auto = min(AGC_MAX, max(AGC_MIN, AGC_TARGET / max(agc_ref, 0.03)))
+                        gate = min(1.0, max(0.0, (peak - 0.03) / 0.06))   # เงียบ→เฟดหาย กันบูสต์ noise
+                        mag = np.clip(pre * auto * gain, 0.0, 1.0) * 0.92 * gate
+                    else:                                   # --no-agc: gain ตายตัว
+                        mag = np.clip(pre * gain, 0.0, 1.0) * 0.92
 
                     up = mag > smoothed
                     smoothed = np.where(up, smoothed + (mag - smoothed) * ATTACK,
@@ -1270,6 +1283,10 @@ def main():
     ap.add_argument("--full", action="store_true",
                     help="แนวนอน: viz เต็มจอ 1920x462 + now-playing แถบเล็กล่าง (ต้องมี --viz)")
     ap.add_argument("--no-audio", action="store_true", help="ไม่ capture เสียง (now-playing อย่างเดียว)")
+    ap.add_argument("--gain", type=float, default=1.0,
+                    help="ความไวเสียง (บน AGC = ปรับ target; --no-agc = gain ตายตัว; default 1.0)")
+    ap.add_argument("--no-agc", dest="agc", action="store_false",
+                    help="ปิด auto-gain (ใช้ --gain ตายตัวแทน)")
     ap.add_argument("--rotate", type=int, default=None, choices=[0, 90, 180, 270],
                     help="บังคับมุมหมุน wire เอง (ถ้าจอกลับหัว/ตะแคง)")
     ap.add_argument("--quality", type=int, default=86, help="คุณภาพ JPEG 1-95")
@@ -1345,7 +1362,9 @@ def main():
         threading.Thread(target=smtc_poller, args=(state, stop_evt), daemon=True).start()
         log("เริ่ม SMTC poller (now-playing)")
     if not args.demo and not args.no_audio:
-        threading.Thread(target=audio_capture, args=(spec, stop_evt), daemon=True).start()
+        threading.Thread(target=audio_capture,
+                         args=(spec, stop_evt, 48000, 2048, args.gain, args.agc),
+                         daemon=True).start()
 
     # ── เปิดจอ ──
     from trofeo import TrofeoLCD
