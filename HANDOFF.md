@@ -24,18 +24,20 @@ python vibe.py --full --viz random       # ทดสอบ (ต่อจอ Trof
 - ⚠️ ถ้า handshake ค้าง (Errno 10060 ทั้งที่ device OK): **drain IN pipe ก่อน** —
   `python -c "import usb.core; from trofeo import *; d=usb.core.find(idVendor=0x0416,idProduct=0x5408,backend=_BACKEND); [d.read(0x81,512,200) for _ in range(3)]"`
 
-## 🏁 งานต่อไป: ต่อ SimHub / telemetry แข่งรถ
-เป้า: โชว์แดชแข่งรถบนจอ strip (rev strip ไฟวิ่ง + เกียร์ตัวใหญ่ + speed/tire/lap)
-SimHub ไม่รู้จักจอ Trofeo → บริดจ์ผ่าน Python (โครง `trofeo.py`). 2 ทาง:
+## 🏁 SimHub / telemetry แข่งรถ — ✅ v1 เขียนแล้ว (รอทดสอบบนจอ)
+เลือกทาง **native render + แหล่ง = SimHub Custom Serial** (รองรับ AC/ACC/iRacing).
+ไฟล์ใหม่:
+- `simhub.py` — ชั้นรับ telemetry: `Telemetry` dataclass, `parse_line` (key=value ทนพัง),
+  `SerialTelemetry` (อ่าน COM + reconnect เอง), `DemoTelemetry` (จำลอง ไว้ทดสอบ)
+- `race.py` — เรนเดอร์แดช (rev strip + เกียร์ใหญ่ + speed/pos/lap + lap time/delta + ยาง + ธง/DRS/TC/ABS)
+  + main loop ส่งขึ้นจอ (สไตล์ `send.py`). มี `--demo` / `--preview PNG` / `--port COMx`
+- `docs/SIMHUB.md` — วิธีต่อ com0com + สตริง JavaScript ที่ต้องวางใน SimHub Custom Serial
 
-1. **Screen mirror** (ง่าย): ออกแบบ dashboard ใน SimHub → capture หน้าต่างนั้น → สตรีมขึ้นจอ
-   (เหมือน `send.py` แต่เป็นภาพสด). ทำ mirror อะไรก็ได้.
-2. **Native telemetry dash** (สวยกว่า, แนะนำ): ดึง telemetry แล้วเรนเดอร์เอง สไตล์ vibe.py
-   - แหล่งข้อมูล: **UDP telemetry ของเกมตรง ๆ** (AC/ACC/iRacing/Forza มี built-in — ไม่ต้องมี SimHub เลย)
-     หรือ **SimHub Custom Serial output** (SimHub → virtual COM port → Python อ่าน)
-   - เรนเดอร์: rev strip (ไฟ RPM วิ่ง + redline flash), เกียร์ตัวใหญ่กลาง, speed, gap/lap, tire temp
+ทดสอบ (ไล่จากง่าย): `python race.py --demo --preview out.png` → `--demo` (ขึ้นจอ) → `--port COMx` (จริง)
 
-**ต้องถาม Aum ก่อนเริ่ม:** (1) เกม/sim อะไร? (2) มี SimHub แล้วไหม หรือดึง UDP ตรง? (3) mirror หรือ native?
+**⚠️ ยังไม่ได้รันจริง** (เครื่องที่เขียนไม่มี Python) — ต้องลอง `--preview` ก่อน แล้วค่อยเทสต์บนจอ
+**งานต่อ/ปรับได้:** ปรับ property name ใน SimHub ตามเกม, จูน layout/สี, เพิ่มธง yellow/blue จาก flag,
+  ทางเลือกสำรอง = screen-mirror หน้าต่าง SimHub Dash (ยังไม่ทำ)
 
 ## 📦 repo / remotes
 - personal (ของ Aum): `https://github.com/aumbro/trofeo-music` → `git push personal main`
