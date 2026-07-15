@@ -1066,29 +1066,20 @@ def _rebin(a, n):
 
 
 class PeakDrops:
-    """หยดพีคแบบแรงโน้มถ่วง (สำหรับ inverted): spawn หยดใหม่ที่ปลายแท่งเรื่อย ๆ ขณะเล่น
-    แต่ละหยดร่วงลงอิสระเร่งความเร็ว → มีหลายหยดร่วงพร้อมกันต่อคอลัมน์ (สายหยด)"""
+    """หยดพีคแบบแรงโน้มถ่วง (สำหรับ inverted): **1 คอลัมน์ = 1 หยด** — spawn หยดใหม่
+    ที่ปลายแท่งเฉพาะตอนหยดเก่าของคอลัมน์นั้นร่วงหายที่ก้นแล้ว (ไม่รัวหลายลูกพร้อมกัน)"""
 
-    def __init__(self, g=2.2, spawn_gap=0.14, cap=400):
-        self.g, self.spawn_gap, self.cap = g, spawn_gap, cap
+    def __init__(self, g=2.2, cap=200):
+        self.g, self.cap = g, cap
         self.drops = []              # [col, pos, vel]
-        self.cd = None               # cooldown spawn ต่อคอลัมน์
-        self.prev = None
 
     def update(self, cols, mag, dt=0.033):
-        if self.cd is None or len(self.cd) != cols:
-            self.cd = np.zeros(cols, np.float32)
-            self.prev = np.zeros(cols, np.float32)
-        self.cd -= dt
+        active = set(int(dp[0]) for dp in self.drops)   # คอลัมน์ที่ยังมีหยดร่วงอยู่
         for c in range(cols):
             m = float(mag[c])
-            # spawn หยดใหม่ที่ปลายแท่งเมื่อแท่งสูงพอ + พ้น cooldown (สายหยดต่อเนื่อง)
-            # หรือเมื่อแท่งพุ่งขึ้น (rising edge = จังหวะบีต) ให้หยดทันที
-            rising = m > self.prev[c] + 0.05
-            if m > 0.1 and (self.cd[c] <= 0 or rising) and len(self.drops) < self.cap:
+            # spawn เฉพาะคอลัมน์ที่ 'ว่าง' (หยดเก่าร่วงหายแล้ว) + แท่งสูงพอ
+            if m > 0.12 and c not in active and len(self.drops) < self.cap:
                 self.drops.append([c, m, 0.0])
-                self.cd[c] = self.spawn_gap
-            self.prev[c] = m
         alive = []
         for dp in self.drops:
             dp[2] += self.g * dt      # เร่งความเร็ว
@@ -1112,11 +1103,17 @@ def peak_drops():
 def draw_dot_matrix(d, x0, y0, w, h, bands, peaks, base_hue, cols=18, invert=False):
     """สเปกตรัมแบบ LED matrix: แต่ละคอลัมน์ = ย่านความถี่, ก่อพิกเซลสี่เหลี่ยมตาม mag
     ไล่ hue ตามคอลัมน์ (รุ้ง-ตามปก) + peak cap (ขาว) ตกช้า
-    invert=True → กลับหัว: แท่งห้อยจากบนลงล่าง, พีคร่วงลงล่าง"""
+    invert=True → กลับหัว: แท่งห้อยจากบนลงล่าง, พีคร่วงลงล่าง
+    (บน region เตี้ย (แนวนอน) จะลดความสูงแต่ละ dot ให้ได้แถวพอ → กลับหัวอ่านรู้เรื่อง)"""
     cell = w / cols
     pad = cell * 0.15
     cw = cell - 2 * pad
-    rows = int(h / cell)
+    ch = cell * 0.62                              # dot แบน (สูง ~0.62 ของกว้าง) ดูดีกว่าจัตุรัส
+    if h / ch < 16:                               # region เตี้ย → แบนเพิ่มให้ได้ ≥16 แถว (normal เท่า invert)
+        ch = h / 16
+    vpad = min(pad, ch * 0.18)
+    cht = ch - 2 * vpad                           # ความสูงตัว dot (ลบ padding แนวตั้ง)
+    rows = max(1, int(h / ch))
     cm = _rebin(bands, cols)
     pk = _rebin(peaks, cols) if peaks is not None else cm
     drops = peak_drops().update(cols, cm) if invert else None  # หยดพีคหลายลูก (invert)
@@ -1125,15 +1122,15 @@ def draw_dot_matrix(d, x0, y0, w, h, bands, peaks, base_hue, cols=18, invert=Fal
         hue = base_hue + (c / max(1, cols - 1)) * 210.0
         cx = x0 + c * cell + pad
         for r in range(lit):
-            cyt = (y0 + r * cell + pad) if invert else (y0 + h - (r + 1) * cell + pad)
+            cyt = (y0 + r * ch + vpad) if invert else (y0 + h - (r + 1) * ch + vpad)
             v = 0.5 + 0.5 * (r / rows)
-            d.rectangle([cx, cyt, cx + cw, cyt + cw], fill=_hsv(hue, 0.85, v) + (240,))
+            d.rectangle([cx, cyt, cx + cw, cyt + cht], fill=_hsv(hue, 0.85, v) + (240,))
         if not invert:                                # peak-hold ปกติ (เด้งขึ้น ตกช้า)
             pr = int(round(float(pk[c]) * rows))
             if 0 < pr <= rows:
-                cyt = y0 + h - pr * cell + pad
+                cyt = y0 + h - pr * ch + vpad
                 cap = _lerp(_hsv(hue, 0.85, 1.0), (255, 255, 255), 0.55)
-                d.rectangle([cx, cyt, cx + cw, cyt + cw], fill=cap + (255,))
+                d.rectangle([cx, cyt, cx + cw, cyt + cht], fill=cap + (255,))
     if invert:                                        # หยดพีคร่วงลง — วาดเฉพาะตอนพ้นปลายแท่ง (ไม่ทับแท่ง)
         for col, pos, _v in drops:
             if pos <= float(cm[col]) + 0.5 / rows:    # ยังอยู่ในแท่ง → ข้าม (ดันให้โผล่ใต้แท่ง)
@@ -1142,9 +1139,9 @@ def draw_dot_matrix(d, x0, y0, w, h, bands, peaks, base_hue, cols=18, invert=Fal
             if 0 < pr <= rows:
                 hue = base_hue + (col / max(1, cols - 1)) * 210.0
                 cx = x0 + col * cell + pad
-                cyt = y0 + (pr - 1) * cell + pad
+                cyt = y0 + (pr - 1) * ch + vpad
                 cap = _lerp(_hsv(hue, 0.85, 1.0), (255, 255, 255), 0.55)
-                d.rectangle([cx, cyt, cx + cw, cyt + cw], fill=cap + (255,))
+                d.rectangle([cx, cyt, cx + cw, cyt + cht], fill=cap + (255,))
 
 
 # ── waveform มิเรอร์ (เส้นบางยื่นซ้าย-ขวารอบเส้นกลางเรืองแสง — สไตล์ภาพอ้างอิง) ──
@@ -1563,7 +1560,22 @@ def main():
                     snap["_viz"] = rnd_viz
             canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
             wire = to_wire(canvas, info["width"], info["height"], angle)
-            lcd.send_jpeg(to_jpeg(wire, args.quality))
+            try:
+                lcd.send_jpeg(to_jpeg(wire, args.quality))
+            except Exception as e:            # USB glitch (I/O error ฯลฯ) → reconnect ไม่ crash
+                log("USB error:", type(e).__name__, e, "— reconnect ...")
+                try:
+                    lcd.close()
+                except Exception:
+                    pass
+                stop_evt.wait(0.6)
+                try:
+                    info = lcd.open()
+                    log("reconnect สำเร็จ")
+                except Exception as e2:
+                    log("reconnect ล้ม:", e2, "— รอ 2s")
+                    stop_evt.wait(2.0)
+                continue
             if t >= gc_next:                  # เก็บขยะเป็นระยะ (ครั้งเดียว/20s) แทน GC อัตโนมัติ
                 gc.collect()
                 gc_next = t + 20.0
