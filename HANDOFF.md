@@ -33,6 +33,10 @@ python vibe.py --full --viz random       # ทดสอบ (ต่อจอ Trof
   + main loop ส่งขึ้นจอ (สไตล์ `send.py`). มี `--demo` / `--preview PNG` / `--port COMx`
 - `docs/SIMHUB.md` — วิธีต่อ com0com + สตริง JavaScript ที่ต้องวางใน SimHub Custom Serial
 
+- `trackmap.py` — track minimap ฝั่งขวา: เรียนรู้เส้นสนามจากพิกัดรถ (จดตอนวิ่งรอบแรก → ล็อก),
+  วาดเส้นไล่สี sector S1/S2/S3, จุดรถ, start/finish, ธงเหลือง/แดง = ย้อมทั้งวง
+  (ต้องให้ SimHub ส่ง `x`/`y`/`sec` — ชื่อ property ต่อเกมอยู่ใน docs/SIMHUB.md)
+
 ทดสอบ (ไล่จากง่าย): `python race.py --demo --preview out.png` → `--demo` (ขึ้นจอ) → `--port COMx` (จริง)
 
 **⚠️ ยังไม่ได้รันจริง** (เครื่องที่เขียนไม่มี Python) — ต้องลอง `--preview` ก่อน แล้วค่อยเทสต์บนจอ

@@ -56,6 +56,12 @@ class Telemetry:
     t_fr: float = 0.0
     t_rl: float = 0.0
     t_rr: float = 0.0
+    # พิกัดรถบนสนาม (world 2D) สำหรับ track minimap — iRacing ใช้ lon/lat,
+    # AC/ACC ใช้ carCoordinates. หน่วยอะไรก็ได้ TrackMap normalize ให้เอง
+    x: float = 0.0
+    y: float = 0.0
+    sec: int = 0               # sector ปัจจุบัน 1..3 (0 = ไม่รู้)
+    has_pos: bool = False      # มีพิกัด x/y จริงในเฟรมนี้ไหม (แยก 0,0 ออกจาก "ไม่มีข้อมูล")
 
     @property
     def rpm_frac(self) -> float:
@@ -97,6 +103,8 @@ _KEYS = {
     "pit": ("pit", _to_int),       "flag": ("flag", _to_str),
     "tfl": ("t_fl", _to_float),    "tfr": ("t_fr", _to_float),
     "trl": ("t_rl", _to_float),    "trr": ("t_rr", _to_float),
+    "x": ("x", _to_float),         "y": ("y", _to_float),
+    "sec": ("sec", _to_int),
 }
 
 
@@ -121,6 +129,8 @@ def parse_line(line: str, base: Telemetry) -> Telemetry:
         vals[attr] = cv
     if not vals:
         return base
+    if "x" in vals or "y" in vals:
+        vals["has_pos"] = True
     return replace(base, ts=time.time(), connected=True, **vals)
 
 
@@ -132,6 +142,29 @@ def gear_label(g: str) -> str:
     if g in ("R", "-1"):
         return "R"
     return g
+
+
+def demo_sector(u: float) -> int:
+    """แบ่ง sector 1/2/3 ตามสัดส่วนรอบ u (0..1)"""
+    return 1 if u < 1 / 3 else (2 if u < 2 / 3 else 3)
+
+
+def demo_track_xy(u: float):
+    """พิกัดสนามจำลอง (ลูปปิดมีโค้ง คล้ายสนามจริง) ที่สัดส่วนรอบ u (0..1)"""
+    a = 2 * math.pi * u
+    x = math.cos(a) + 0.35 * math.cos(3 * a)
+    y = 0.70 * math.sin(a) - 0.25 * math.sin(2 * a) + 0.15 * math.sin(3 * a)
+    return x * 1000.0, y * 1000.0
+
+
+def demo_track_outline(n: int = 260):
+    """เส้นสนามจำลองครบวง = [(x, y, sector), ...] ไว้ seed TrackMap ตอน demo/preview"""
+    pts = []
+    for i in range(n + 1):
+        u = (i % n) / n
+        x, y = demo_track_xy(u)
+        pts.append((x, y, demo_sector(u)))
+    return pts
 
 
 class SerialTelemetry:
@@ -212,6 +245,8 @@ class DemoTelemetry:
     def stop(self):
         pass
 
+    T_LAP = 12.0                                       # วินาที/รอบ (จำลอง)
+
     def latest(self) -> Telemetry:
         t = time.time() - self._t0
         cycle = math.sin(t * 0.9) * 0.5 + 0.5          # 0..1 ขึ้น-ลงนุ่ม ๆ
@@ -219,16 +254,20 @@ class DemoTelemetry:
         rpm = 1200 + cycle * (max_rpm - 1200)
         gear = min(8, 1 + int(cycle * 7))
         speed = 40 + cycle * 260
-        sec = t % 92                                   # เวลารอบปัจจุบัน (จำลอง)
-        cur = f"{int(sec // 60)}:{sec % 60:06.3f}"     # เช่น "0:32.345"
+        prog = (t % self.T_LAP) / self.T_LAP           # สัดส่วนรอบ 0..1 (วิ่งรอบสนาม)
+        lapnum = 3 + int(t / self.T_LAP)
+        x, y = demo_track_xy(prog)
+        sec_t = t % 92                                 # เวลารอบปัจจุบัน (จำลอง)
+        cur = f"{int(sec_t // 60)}:{sec_t % 60:06.3f}"  # เช่น "0:32.345"
         return Telemetry(
             ts=time.time(), connected=True,
             speed=speed, rpm=rpm, max_rpm=max_rpm, gear=str(gear),
-            lap=3, laps=12, pos=5, cars=20,
+            lap=lapnum, laps=12, pos=5, cars=20,
             cur_lap=cur, last_lap="1:32.345", best_lap="1:31.850",
             delta=f"{math.sin(t * 0.5) * 0.8:+.3f}",
             fuel=34.2, tc=3, abs=2,
             drs=1 if cycle > 0.7 else 0, pit=0, flag="GREEN",
             t_fl=88 + cycle * 12, t_fr=90 + cycle * 12,
             t_rl=85 + cycle * 9, t_rr=86 + cycle * 9,
+            x=x, y=y, sec=demo_sector(prog), has_pos=True,
         )

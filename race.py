@@ -30,7 +30,9 @@ except Exception:
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 import frame as F
-from simhub import DemoTelemetry, SerialTelemetry, Telemetry, gear_label
+from simhub import (DemoTelemetry, SerialTelemetry, Telemetry,
+                    demo_track_outline, gear_label)
+from trackmap import TrackMap
 # หมายเหตุ: TrofeoLCD (pyusb) import แบบ lazy ใน main() หลังสาขา --preview
 # เพื่อให้เรนเดอร์/preview ใช้แค่ Pillow โดยไม่ต้องมี pyusb/จอ
 
@@ -197,8 +199,8 @@ def draw_badges(d, t: Telemetry, cx: int, y: int):
         x += wpill + gap
 
 
-def render(t: Telemetry, phase: float = 0.0) -> Image.Image:
-    """เรนเดอร์ 1 เฟรมแดชแข่งรถ (1920x462) จาก Telemetry"""
+def render(t: Telemetry, phase: float = 0.0, tmap: TrackMap = None) -> Image.Image:
+    """เรนเดอร์ 1 เฟรมแดชแข่งรถ (1920x462) จาก Telemetry (+ track minimap ถ้ามี tmap)"""
     img = Image.new("RGB", (W, H), C_BG)
     d = ImageDraw.Draw(img)
 
@@ -240,18 +242,22 @@ def render(t: Telemetry, phase: float = 0.0) -> Image.Image:
     d.text((rx, 165), pos_txt, font=font(92), fill=accent, anchor="mm")
     d.text((rx, 258), lap_txt, font=font(58), fill=C_INK, anchor="mm")
 
-    # แถวล่าง: lap time (ซ้าย) · delta (กลาง) · badges · ยาง (ขวา)
+    # แถวล่าง (ฝั่งซ้าย-กลาง): lap time · delta · badges · ยาง — ฝั่งขวาเว้นให้ minimap
     d.text((44, 372), "LAST", font=font(26), fill=C_MUTE, anchor="lm")
-    d.text((44, 414), clean_laptime(t.last_lap), font=font(46), fill=C_INK, anchor="lm")
-    d.text((330, 372), "BEST", font=font(26), fill=C_MUTE, anchor="lm")
-    d.text((330, 414), clean_laptime(t.best_lap), font=font(46), fill=C_GOOD, anchor="lm")
+    d.text((44, 412), clean_laptime(t.last_lap), font=font(44), fill=C_INK, anchor="lm")
+    d.text((290, 372), "BEST", font=font(26), fill=C_MUTE, anchor="lm")
+    d.text((290, 412), clean_laptime(t.best_lap), font=font(44), fill=C_GOOD, anchor="lm")
 
     delta_col = C_WARN if t.delta.startswith("+") else C_GOOD
-    d.text((760, 372), "Δ BEST", font=font(26), fill=C_MUTE, anchor="mm")
-    d.text((760, 416), t.delta or "—", font=font(58), fill=delta_col, anchor="mm")
+    d.text((600, 372), "Δ BEST", font=font(26), fill=C_MUTE, anchor="mm")
+    d.text((600, 412), t.delta or "—", font=font(44), fill=delta_col, anchor="mm")
 
-    draw_badges(d, t, cx=1180, y=400)
-    draw_tires(d, t, x0=1710, y0=300)
+    draw_badges(d, t, cx=900, y=410)
+    draw_tires(d, t, x0=1130, y0=342)
+
+    # track minimap (ฝั่งขวา)
+    if tmap is not None:
+        tmap.render_into(d, (1410, 86, 470, 300), t, font)
 
     # ธง: กรอบสีบาง ๆ รอบจอ
     fc = FLAG_COLORS.get((t.flag or "").upper())
@@ -275,10 +281,12 @@ def main():
     ap.add_argument("--pid", type=lambda s: int(s, 0), default=0x5408, help="USB PID (default 0x5408)")
     args = ap.parse_args()
 
-    # ── โหมด preview: ไม่ต้องต่อจอ/เกม ── เรนเดอร์เฟรมเดียวจาก demo ──
+    # ── โหมด preview: ไม่ต้องต่อจอ/เกม ── เรนเดอร์เฟรมเดียวจาก demo (map เต็มเลย) ──
     if args.preview:
         src = DemoTelemetry().start()
-        img = render(src.latest(), phase=time.time())
+        tmap = TrackMap()
+        tmap.set_outline(demo_track_outline())
+        img = render(src.latest(), phase=time.time(), tmap=tmap)
         img.save(args.preview)
         log(f"บันทึก preview → {args.preview} ({W}x{H})")
         return
@@ -288,13 +296,16 @@ def main():
 
     from trofeo import TrofeoLCD          # lazy: โหมดส่งขึ้นจอเท่านั้นที่ต้องใช้ pyusb
 
-    # แหล่ง telemetry
+    # แหล่ง telemetry + track map
+    tmap = TrackMap()
     if args.demo:
         src = DemoTelemetry().start()
+        tmap.set_outline(demo_track_outline())     # demo: seed สนามครบวงเลย
         log("โหมด demo: ใช้ข้อมูลจำลอง")
     else:
         src = SerialTelemetry(args.port, args.baud).start()
         log(f"อ่าน telemetry จาก {args.port} @ {args.baud} (SimHub Custom Serial)")
+        log("track map: จะเรียนรู้เส้นสนามจากการวิ่งรอบแรก (ต้องส่งพิกัด x/y — ดู docs/SIMHUB.md)")
 
     lcd = TrofeoLCD(pid=args.pid)
     log("กำลังเปิด USB + handshake ...")
@@ -310,7 +321,10 @@ def main():
     try:
         while True:
             t0 = time.time()
-            payload = F.encode_frame(render(src.latest(), phase=t0), w, h,
+            tel = src.latest()
+            if not args.demo and tel.has_pos:          # live: จดเส้นสนามจากพิกัดจริง
+                tmap.add(tel.x, tel.y, tel.sec, tel.lap)
+            payload = F.encode_frame(render(tel, phase=t0, tmap=tmap), w, h,
                                      encode_base=base, orientation=args.orientation,
                                      fit="contain", quality=90)
             lcd.send_jpeg(payload)
