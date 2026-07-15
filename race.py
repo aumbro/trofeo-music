@@ -17,9 +17,11 @@ race.py — Race dashboard บนจอ Thermalright Trofeo Vision 9.16 (1920x46
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 import time
+from dataclasses import replace
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -125,7 +127,8 @@ def clean_laptime(s: str) -> str:
     → คืน "1:31.850" (ตัดชั่วโมงที่เป็นศูนย์ + เศษวินาทีเหลือ 3 หลัก)
     """
     s = (s or "").strip()
-    if not s:
+    # ว่าง หรือเวลาเป็นศูนย์ล้วน (00:00:00 / 0:00.000 = ยังไม่มีเวลา) → ขีด
+    if not s or not s.replace("0", "").replace(":", "").replace(".", "").strip():
         return "--:--.---"
     parts = s.split(":")
     if len(parts) == 3:                       # h:m:s -> ตัด h ถ้าเป็นศูนย์
@@ -139,6 +142,18 @@ def clean_laptime(s: str) -> str:
     except ValueError:
         pass
     return ":".join(parts)
+
+
+def lap_secs(ts: str) -> float:
+    """แปลงเวลาต่อรอบเป็นวินาที (ไว้หารอบดีสุด) — คืน inf ถ้าไม่ใช่เวลา"""
+    ts = clean_laptime(ts)
+    if ts.startswith("--"):
+        return float("inf")
+    try:
+        m, s = ts.split(":")
+        return int(m) * 60 + float(s)
+    except ValueError:
+        return float("inf")
 
 
 # ── ชิ้นส่วนแดช ─────────────────────────────────────────────────────────────
@@ -199,7 +214,23 @@ def draw_badges(d, t: Telemetry, cx: int, y: int):
         x += wpill + gap
 
 
-def render(t: Telemetry, phase: float = 0.0, tmap: TrackMap = None) -> Image.Image:
+def draw_lap_table(d, laps):
+    """ตารางเวลาต่อรอบ (ฝั่งซ้ายบน) — โชว์ 5 รอบล่าสุด, รอบดีสุดเป็นสีเขียว"""
+    x0, y0 = 34, 96
+    d.text((x0, y0), "LAPS", font=font(26), fill=C_MUTE, anchor="lm")
+    if not laps:
+        d.text((x0, y0 + 50), "—", font=font(38), fill=dim(C_MUTE, 0.7), anchor="lm")
+        return
+    best = min(lap_secs(t) for _, t in laps)
+    ry = y0 + 46
+    for n, ts in laps[-5:]:
+        col = C_GOOD if lap_secs(ts) <= best else C_INK
+        d.text((x0, ry), f"L{n}", font=font(28), fill=C_MUTE, anchor="lm")
+        d.text((x0 + 78, ry), clean_laptime(ts), font=font(36), fill=col, anchor="lm")
+        ry += 44
+
+
+def render(t: Telemetry, phase: float = 0.0, tmap: TrackMap = None, laps=None) -> Image.Image:
     """เรนเดอร์ 1 เฟรมแดชแข่งรถ (1920x462) จาก Telemetry (+ track minimap ถ้ามี tmap)"""
     img = Image.new("RGB", (W, H), C_BG)
     d = ImageDraw.Draw(img)
@@ -242,6 +273,9 @@ def render(t: Telemetry, phase: float = 0.0, tmap: TrackMap = None) -> Image.Ima
     d.text((rx, 165), pos_txt, font=font(92), fill=accent, anchor="mm")
     d.text((rx, 258), lap_txt, font=font(58), fill=C_INK, anchor="mm")
 
+    # ตารางเวลาต่อรอบ (ฝั่งซ้ายบน)
+    draw_lap_table(d, laps or [])
+
     # แถวล่าง (ฝั่งซ้าย-กลาง): lap time · delta · badges · ยาง — ฝั่งขวาเว้นให้ minimap
     d.text((44, 372), "LAST", font=font(26), fill=C_MUTE, anchor="lm")
     d.text((44, 412), clean_laptime(t.last_lap), font=font(44), fill=C_INK, anchor="lm")
@@ -279,14 +313,24 @@ def main():
     ap.add_argument("--rotate", type=int, default=None, choices=[0, 90, 180, 270],
                     help="บังคับ encode_base เอง (ถ้าจอกลับหัว/ตะแคง) แทนค่า auto")
     ap.add_argument("--pid", type=lambda s: int(s, 0), default=0x5408, help="USB PID (default 0x5408)")
+    ap.add_argument("--map-rotate", type=float, default=0.0,
+                    help="หมุนแมพสนาม (องศา) แก้ทิศจาก heading integration")
+    ap.add_argument("--map-flip", action="store_true", help="กลับด้านซ้าย-ขวาของแมพ")
+    ap.add_argument("--map-reset", action="store_true",
+                    help="ลบเส้นสนามที่เคยเรียนรู้ (track_map.json) แล้วเรียนใหม่")
     args = ap.parse_args()
+
+    track_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "track_map.json")
 
     # ── โหมด preview: ไม่ต้องต่อจอ/เกม ── เรนเดอร์เฟรมเดียวจาก demo (map เต็มเลย) ──
     if args.preview:
         src = DemoTelemetry().start()
         tmap = TrackMap()
+        tmap.set_orientation(args.map_rotate, args.map_flip)
         tmap.set_outline(demo_track_outline())
-        img = render(src.latest(), phase=time.time(), tmap=tmap)
+        sample = [(1, "1:33.201"), (2, "1:32.118"), (3, "1:31.850"),
+                  (4, "1:32.004"), (5, "1:31.997")]
+        img = render(src.latest(), phase=time.time(), tmap=tmap, laps=sample)
         img.save(args.preview)
         log(f"บันทึก preview → {args.preview} ({W}x{H})")
         return
@@ -298,6 +342,7 @@ def main():
 
     # แหล่ง telemetry + track map
     tmap = TrackMap()
+    tmap.set_orientation(args.map_rotate, args.map_flip)
     if args.demo:
         src = DemoTelemetry().start()
         tmap.set_outline(demo_track_outline())     # demo: seed สนามครบวงเลย
@@ -305,7 +350,13 @@ def main():
     else:
         src = SerialTelemetry(args.port, args.baud).start()
         log(f"อ่าน telemetry จาก {args.port} @ {args.baud} (SimHub Custom Serial)")
-        log("track map: จะเรียนรู้เส้นสนามจากการวิ่งรอบแรก (ต้องส่งพิกัด x/y — ดู docs/SIMHUB.md)")
+        if args.map_reset and os.path.exists(track_file):
+            os.remove(track_file)
+            log("ลบ track_map.json แล้ว — จะเรียนรู้เส้นสนามใหม่")
+        if tmap.load(track_file):
+            log("โหลดเส้นสนามที่เคยเรียนรู้ไว้ (track_map.json)")
+        else:
+            log("track map: จะเรียนรู้เส้นสนามจากรอบแรก (ขับให้ครบ 1 รอบ)")
 
     lcd = TrofeoLCD(pid=args.pid)
     log("กำลังเปิด USB + handshake ...")
@@ -318,13 +369,38 @@ def main():
 
     interval = 1.0 / max(1.0, args.fps)
     log(f"เริ่มส่งแดช {args.fps:.0f} fps (Ctrl+C ออก)")
+    ix = iy = 0.0          # ตำแหน่งสะสมจาก heading (เกมที่ไม่มีพิกัด x/y)
+    ilast = None
+    was_ready = tmap.ready
+    lap_history = []       # [(lap_num, time_str)] เก็บเวลาแต่ละรอบที่วิ่งจบ
+    seen_lap = None
     try:
         while True:
             t0 = time.time()
             tel = src.latest()
-            if not args.demo and tel.has_pos:          # live: จดเส้นสนามจากพิกัดจริง
-                tmap.add(tel.x, tel.y, tel.sec, tel.lap)
-            payload = F.encode_frame(render(tel, phase=t0, tmap=tmap), w, h,
+            # จับเวลาต่อรอบ: พอ lap เปลี่ยน = รอบก่อนหน้าวิ่งจบ → เก็บ last_lap ของมัน
+            if tel.connected and tel.lap and tel.lap != seen_lap:
+                if seen_lap is not None and math.isfinite(lap_secs(tel.last_lap)):
+                    lap_history.append((seen_lap, tel.last_lap))
+                    lap_history = lap_history[-12:]
+                seen_lap = tel.lap
+            if not args.demo and tel.has_pos:          # live: มีพิกัดจริง (เช่น iRacing lon/lat)
+                tmap.add(tel.x, tel.y, tel.sec, tel.lap, tel.ncp)
+            elif not args.demo and tel.has_head and tel.connected:
+                # ไม่มีพิกัด แต่มี heading (เช่น AC) → integrate speed×heading เป็นตำแหน่ง
+                if ilast is not None and tel.speed > 0.5:
+                    dt = t0 - ilast
+                    v = tel.speed / 3.6                # km/h -> m/s
+                    ix += v * math.sin(tel.heading) * dt
+                    iy += v * math.cos(tel.heading) * dt
+                ilast = t0
+                tel = replace(tel, x=ix, y=iy, has_pos=True)
+                tmap.add(ix, iy, tel.sec, tel.lap, tel.ncp)
+            if tmap.ready and not was_ready:           # เพิ่งเรียนรู้จบ → เซฟไว้ใช้ครั้งหน้า
+                tmap.save(track_file)
+                was_ready = True
+                log("เรียนรู้เส้นสนามครบ 1 รอบ — เซฟ track_map.json แล้ว")
+            payload = F.encode_frame(render(tel, phase=t0, tmap=tmap, laps=lap_history), w, h,
                                      encode_base=base, orientation=args.orientation,
                                      fit="contain", quality=90)
             lcd.send_jpeg(payload)

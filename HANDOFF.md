@@ -24,7 +24,7 @@ python vibe.py --full --viz random       # ทดสอบ (ต่อจอ Trof
 - ⚠️ ถ้า handshake ค้าง (Errno 10060 ทั้งที่ device OK): **drain IN pipe ก่อน** —
   `python -c "import usb.core; from trofeo import *; d=usb.core.find(idVendor=0x0416,idProduct=0x5408,backend=_BACKEND); [d.read(0x81,512,200) for _ in range(3)]"`
 
-## 🏁 SimHub / telemetry แข่งรถ — ✅ v1 เขียนแล้ว (รอทดสอบบนจอ)
+## 🏁 SimHub / telemetry แข่งรถ — ✅ ใช้งานจริงกับ AC ผ่านแล้ว (com0com COM7↔COM8)
 เลือกทาง **native render + แหล่ง = SimHub Custom Serial** (รองรับ AC/ACC/iRacing).
 ไฟล์ใหม่:
 - `simhub.py` — ชั้นรับ telemetry: `Telemetry` dataclass, `parse_line` (key=value ทนพัง),
@@ -37,11 +37,14 @@ python vibe.py --full --viz random       # ทดสอบ (ต่อจอ Trof
   วาดเส้นไล่สี sector S1/S2/S3, จุดรถ, start/finish, ธงเหลือง/แดง = ย้อมทั้งวง
   (ต้องให้ SimHub ส่ง `x`/`y`/`sec` — ชื่อ property ต่อเกมอยู่ใน docs/SIMHUB.md)
 
-ทดสอบ (ไล่จากง่าย): `python race.py --demo --preview out.png` → `--demo` (ขึ้นจอ) → `--port COMx` (จริง)
+- ตาราง **LAPS** ฝั่งซ้าย (เวลาแต่ละรอบ, ไฮไลต์รอบดีสุด) + track map ฝั่งขวา
+- **track map**: iRacing ใช้พิกัด lon/lat; **AC ไม่มีพิกัด → integrate `head`(heading)+speed** สร้างเส้นเอง,
+  วางจุดรถด้วย `ncp`, เซฟ `track_map.json` (โหลดกลับไม่ต้องเรียนใหม่), แก้ทิศ `--map-rotate/--map-flip`
 
-**⚠️ ยังไม่ได้รันจริง** (เครื่องที่เขียนไม่มี Python) — ต้องลอง `--preview` ก่อน แล้วค่อยเทสต์บนจอ
-**งานต่อ/ปรับได้:** ปรับ property name ใน SimHub ตามเกม, จูน layout/สี, เพิ่มธง yellow/blue จาก flag,
-  ทางเลือกสำรอง = screen-mirror หน้าต่าง SimHub Dash (ยังไม่ทำ)
+**ทดสอบจริงแล้ว**: AC → SimHub Custom Serial (COM7) → com0com → `race.py --port COM8` → จอ ✅
+  (แดชครบ; track map ของ AC ยังไม่ได้จูนทิศ — ไว้ทำกับ iRacing ทีหลังจะตรงเลย)
+**เครื่องนี้**: Python 3.12 @ `%LOCALAPPDATA%\Programs\Python\Python312`, com0com คู่ COM7⇄COM8 ลงไว้แล้ว
+**งานต่อ/ปรับได้:** จูนทิศ map ต่อเกม, เพิ่ม property ตามเกม, ทางเลือกสำรอง = screen-mirror (ยังไม่ทำ)
 
 ## 📦 repo / remotes
 - personal (ของ Aum): `https://github.com/aumbro/trofeo-music` → `git push personal main`

@@ -62,6 +62,12 @@ class Telemetry:
     y: float = 0.0
     sec: int = 0               # sector ปัจจุบัน 1..3 (0 = ไม่รู้)
     has_pos: bool = False      # มีพิกัด x/y จริงในเฟรมนี้ไหม (แยก 0,0 ออกจาก "ไม่มีข้อมูล")
+    # เกมที่ไม่มีพิกัด x/y (เช่น AC) ส่ง heading (เรเดียน) มาแทน → race.py integrate
+    # speed×heading ตามเวลาเป็นเส้นสนามเอง
+    heading: float = 0.0
+    has_head: bool = False
+    ncp: float = -1.0          # normalized car position บนสนาม 0..1 (-1 = ไม่รู้)
+                               # ใช้วางจุดรถบนเส้นสนามที่เซฟไว้ (ไม่ผูกกับ integration)
 
     @property
     def rpm_frac(self) -> float:
@@ -104,7 +110,8 @@ _KEYS = {
     "tfl": ("t_fl", _to_float),    "tfr": ("t_fr", _to_float),
     "trl": ("t_rl", _to_float),    "trr": ("t_rr", _to_float),
     "x": ("x", _to_float),         "y": ("y", _to_float),
-    "sec": ("sec", _to_int),
+    "sec": ("sec", _to_int),       "head": ("heading", _to_float),
+    "ncp": ("ncp", _to_float),
 }
 
 
@@ -131,6 +138,8 @@ def parse_line(line: str, base: Telemetry) -> Telemetry:
         return base
     if "x" in vals or "y" in vals:
         vals["has_pos"] = True
+    if "heading" in vals:
+        vals["has_head"] = True
     return replace(base, ts=time.time(), connected=True, **vals)
 
 
