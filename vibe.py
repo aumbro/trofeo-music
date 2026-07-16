@@ -382,12 +382,28 @@ def audio_capture(spec: Spectrum, stop_evt: threading.Event, sr=48000, fft_n=204
         mic = sc.get_microphone(str(spk.name), include_loopback=True)
         return mic.recorder(samplerate=sr, channels=2, blocksize=1024)
 
+    # ── กัน "เปิดแอปก่อนเปิดเพลง" ──
+    # WASAPI loopback ที่ arm ตอนไม่มีเสียงเล่น จะส่งแต่ frame ศูนย์ล้วน และค้างแบบนั้น
+    # แม้เพลงจะเริ่มเล่นทีหลัง (ต้อง restart ถึงหาย) → ถ้าเงียบสนิทต่อเนื่องนานพอ ให้ reopen
+    # recorder ใหม่ พอมีเสียงจริงไหลอยู่ตอนเปิด มันจับติดเอง
+    REOPEN_AFTER = max(1, int(sr / 1024 * 2.0))   # เงียบสนิท ~2s → เปิด recorder ใหม่
+    silent_blocks = 0
+
     while not stop_evt.is_set():
         try:
             with open_recorder() as rec:
                 log("visualizer: capturing loopback ...")
                 while not stop_evt.is_set():
                     data = rec.record(numframes=1024)          # (frames, ch)
+                    # เงียบสนิท (ศูนย์ล้วน = ไม่มี stream เล่นอยู่) นานพอ → reopen ให้จับเสียงใหม่ติด
+                    if float(np.abs(data).max()) == 0.0:
+                        silent_blocks += 1
+                        if silent_blocks >= REOPEN_AFTER:
+                            silent_blocks = 0
+                            spec.set(np.zeros(spec.n, dtype=np.float32), active=False)
+                            break                              # ออกไป reopen recorder
+                    else:
+                        silent_blocks = 0
                     mono = data.mean(axis=1).astype(np.float32)
                     m = len(mono)
                     ring = np.roll(ring, -m)
