@@ -42,7 +42,7 @@ class Cfg:
         self.gain = 1.0
         self.agc = True
         self.fps = 30.0
-        self.quality = 86
+        self.quality = 95         # จอ pace ~24fps คงที่ทุกขนาด → quality สูงได้ฟรี
         self.pid = 0x5408
         self.preview = None
         self.art = None

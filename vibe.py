@@ -1511,7 +1511,8 @@ def main():
                     help="ปิด auto-gain (ใช้ --gain ตายตัวแทน)")
     ap.add_argument("--rotate", type=int, default=None, choices=[0, 90, 180, 270],
                     help="บังคับมุมหมุน wire เอง (ถ้าจอกลับหัว/ตะแคง)")
-    ap.add_argument("--quality", type=int, default=86, help="คุณภาพ JPEG 1-95")
+    ap.add_argument("--quality", type=int, default=95,
+                    help="คุณภาพ JPEG 1-95 (default 95 — จอ pace ~24fps คงที่ทุกขนาด quality จึงเพิ่มฟรี)")
     ap.add_argument("--fps", type=float, default=30.0, help="เฟรมต่อวินาที")
     ap.add_argument("--preview", metavar="PNG", help="เรนเดอร์ 1 เฟรมเป็น PNG แล้วออก")
     ap.add_argument("--art", metavar="IMG", help="ใช้รูปนี้เป็นปก (ไว้เทสต์ preview/demo)")
