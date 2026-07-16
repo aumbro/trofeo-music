@@ -132,21 +132,23 @@ python vibe_tray.py
 CLI: `python vibe.py --video CLIP.mp4 --video-fit band` (ต้องมี `pip install opencv-python`)
 > วิดีโอเล่นเงียบ (จอไม่มีลำโพง) — เป็นภาพประกอบ ไม่ sync กับเสียง Spotify/YouTube
 
-### 🕰️ โหมดนาฬิกา (9 สไตล์ เน้นวินเทจ)
+### 🕰️ โหมดนาฬิกา (12 สไตล์ เน้นวินเทจ)
 
 เมนู **นาฬิกา →** เลือกสไตล์ (แนวนอนเสมอ) — วาดเองด้วย PIL ทั้งหมด (7-segment/glow/หน้าปัด):
 
 | วินเทจ | | โมเดิร์น | |
 |---|---|---|---|
-| **Nixie** | หลอดเรืองส้ม + เงาแก้ว + ghost | **Neon** | หลอดนีออนเรือง |
-| **Flip** | ป้ายพลิก split-flap | **Word** | นาฬิกาคำ (IT IS FIVE PAST TEN) |
-| **VFD** | จอเขียว-ฟ้าเรือง + mesh | **Minimal** | ตัวเลขบาง เรียบ |
-| **7-Segment** | LED แดง (นาฬิกาปลุก) | | |
-| **LCD** | เขียวมะกอก (Casio) + ghost | | |
-| **Analog** | เข็ม เลขโรมัน หน้าครีม + แผงวัน/วันที่ | | |
+| **Nixie** | หลอดเรืองส้ม + mesh + ghost | **Neon** | หลอดนีออนเรือง |
+| **Flip** | ป้ายพลิก split-flap (พลิกจริง) | **Word** | นาฬิกาคำ (IT IS FIVE PAST TEN) |
+| **VFD** | จอเขียว-ฟ้าเรือง + mesh | **World** | นาฬิกาโลก 5 เมือง + กลางวัน/คืน |
+| **7-Segment** | LED แดง (นาฬิกาปลุก) | **Cyberpunk** | นีออน HUD + chromatic glitch |
+| **LCD** | เขียวมะกอก (Casio) + ghost | **Minimal** | ตัวเลขบาง เรียบ |
+| **Analog** | เข็ม เลขโรมัน หน้าครีม + แผงวัน | | |
+| **เข็มเรืองแสง** | Casio กลางคืน (lume) + ana-digi | | |
 
 **หมุนเวียนทุกสไตล์** = สลับอัตโนมัติทุก 45 วิ
 CLI: `python vibe.py --clock nixie` · `--clock-cycle` (โค้ดสไตล์อยู่ใน `clocks.py`)
+> World clock ใช้ offset โดยประมาณ (ฤดูร้อน ไม่คิด DST อัตโนมัติ)
 
 ### แพ็กเป็น .exe (ไม่ต้องมี Python)
 

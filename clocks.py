@@ -15,14 +15,18 @@ clocks.py — โหมดนาฬิกาหลายสไตล์สำห
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone, timedelta
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
 
-STYLES = ["nixie", "flip", "vfd", "seg7", "lcd", "analog", "neon", "word", "minimal"]
+STYLES = ["nixie", "flip", "vfd", "seg7", "lcd", "analog", "lumo",
+          "neon", "word", "world", "cyberpunk", "minimal"]
 STYLE_LABELS = {
     "nixie": "Nixie (หลอดเรืองส้ม)", "flip": "Flip (ป้ายพลิก)",
     "vfd": "VFD (จอเขียวเรือง)", "seg7": "7-Segment (LED แดง)",
-    "lcd": "LCD (Casio เขียว)", "analog": "เข็ม (เลขโรมัน)",
-    "neon": "Neon (นีออน)", "word": "Word (นาฬิกาคำ)", "minimal": "Minimal (เรียบ)",
+    "lcd": "LCD (Casio เขียว)", "analog": "เข็ม (เลขโรมัน วินเทจ)",
+    "lumo": "เข็มเรืองแสง (Casio กลางคืน)", "neon": "Neon (นีออน)",
+    "word": "Word (นาฬิกาคำ)", "world": "World (นาฬิกาโลก)",
+    "cyberpunk": "Cyberpunk (นีออน HUD)", "minimal": "Minimal (เรียบ)",
 }
 
 # ── fonts ────────────────────────────────────────────────────────────────────
@@ -128,27 +132,29 @@ def _seg_polys(x, y, w, h, t):
     }
 
 
-def _digital_layout(W, H, dw, dh, th, gapd, colw):
-    """วางเลข HH:MM:SS ให้อยู่กลางจอ → list ของ (kind, char/None, x) + dh, y"""
-    tokens = ["d", "d", "c", "d", "d", "c", "d", "d"]
-    total = 6 * dw + 2 * colw + 7 * gapd
+def _digital_layout(W, H, dw, dh, gi, gm, colw):
+    """วางเลข HH:MM:SS: ในคู่ชิด (gi) เว้นรอบ colon กว้าง (gm) → จัดกลุ่มชัด
+    ลำดับ: d gi d gm : gm d gi d gm : gm d gi d"""
+    seq = [("d", dw), ("s", gi), ("d", dw), ("s", gm), ("c", colw), ("s", gm),
+           ("d", dw), ("s", gi), ("d", dw), ("s", gm), ("c", colw), ("s", gm),
+           ("d", dw), ("s", gi), ("d", dw)]
+    total = sum(w for _, w in seq)
     x = (W - total) / 2
     y = (H - dh) / 2
     out = []
-    for tk in tokens:
-        if tk == "d":
+    for kind, w in seq:
+        if kind == "d":
             out.append(("d", x, dw))
-            x += dw + gapd
-        else:
+        elif kind == "c":
             out.append(("c", x, colw))
-            x += colw + gapd
+        x += w
     return out, y
 
 
 def _draw_digital(base, W, H, hh, mm, ss, on, off, glow_col, blur,
-                  dw=178, dh=298, th=33, gapd=30, colw=52, colon=True):
+                  dw=176, dh=300, th=33, gi=14, gm=30, colw=40, colon=True):
     """วาดนาฬิกาดิจิทัล 7-seg ทับ base (in-place-ish) — คืน base ใหม่ที่บวก glow แล้ว"""
-    layout, y = _digital_layout(W, H, dw, dh, th, gapd, colw)
+    layout, y = _digital_layout(W, H, dw, dh, gi, gm, colw)
     digits = f"{hh:02d}{mm:02d}{ss:02d}"
     strokes = Image.new("RGB", (W, H), (0, 0, 0))
     db = ImageDraw.Draw(base)
@@ -584,18 +590,23 @@ def _word_lit(now):
 
 def _r_word(W, H, now, t):
     cols, rows = 11, 10
-    cell = min((W - 120) / cols, (H - 60) / rows)
-    gx = (W - cell * cols) / 2
-    gy = (H - cell * rows) / 2
-    fnt = _f("mono", int(cell * 0.66))
+    # เซลล์ไม่จัตุรัส: กว้างเต็มจอ (อ่านง่าย) สูงพอดี
+    cw = (W - 140) / cols
+    chh = (H - 40) / rows
+    gx = (W - cw * cols) / 2 + cw / 2
+    gy = (H - chh * rows) / 2 + chh / 2
+    fnt = _f("mono", int(chh * 0.78))
+
+    def pos(r, c):
+        return gx + c * cw, gy + r * chh
 
     def build(W, H):
-        img = Image.new("RGB", (W, H), (12, 12, 16))
+        img = Image.new("RGB", (W, H), (10, 10, 14))
         d = ImageDraw.Draw(img)
         for r in range(rows):
             for c in range(cols):
-                d.text((gx + c * cell + cell / 2, gy + r * cell + cell / 2),
-                       _WORD_ROWS[r][c], font=fnt, fill=(46, 48, 56), anchor="mm")
+                x, y = pos(r, c)
+                d.text((x, y), _WORD_ROWS[r][c], font=fnt, fill=(30, 31, 37), anchor="mm")
         return img
     base = _bg("word", W, H, build)
     lit = _word_lit(now)
@@ -607,11 +618,11 @@ def _r_word(W, H, now, t):
             continue
         r, c0, ln = _W[wkey]
         for c in range(c0, c0 + ln):
-            xx = gx + c * cell + cell / 2
-            yy = gy + r * cell + cell / 2
-            db.text((xx, yy), _WORD_ROWS[r][c], font=fnt, fill=(255, 214, 140), anchor="mm")
-            dg.text((xx, yy), _WORD_ROWS[r][c], font=fnt, fill=(200, 150, 70), anchor="mm")
-    base = _glow_add(base, strokes, 14)
+            x, y = pos(r, c)
+            db.text((x, y), _WORD_ROWS[r][c], font=fnt, fill=(255, 236, 190), anchor="mm")
+            dg.text((x, y), _WORD_ROWS[r][c], font=fnt, fill=(255, 176, 80), anchor="mm")
+    base = _glow_add(base, strokes, 20, 1.1)
+    base = _glow_add(base, strokes, 8, 1.0)          # core คมชัด
     return base
 
 
@@ -631,9 +642,160 @@ def _r_minimal(W, H, now, t):
     return base
 
 
+# ── สไตล์: lumo (analog เข็มเรืองแสง — Casio กลางคืน / ana-digi) ───────────────
+def _r_lumo(W, H, now, t):
+    cx, cy = W / 2, H / 2
+    R = H / 2 - 22
+    ACC = (130, 255, 205)                       # lume เขียว-ฟ้า
+
+    def build(W, H):
+        img = Image.new("RGB", (W, H), (6, 10, 12))
+        d = ImageDraw.Draw(img, "RGBA")
+        d.ellipse([cx - R - 12, cy - R - 12, cx + R + 12, cy + R + 12], fill=(24, 30, 34))
+        d.ellipse([cx - R, cy - R, cx + R, cy + R], fill=(9, 13, 16))
+        d.ellipse([cx - R + 6, cy - R + 6, cx + R - 6, cy + R - 6],
+                  outline=(38, 48, 54), width=3)
+        return img
+    base = _bg("lumo", W, H, build)
+    strokes = Image.new("RGB", (W, H), (0, 0, 0))
+    dg = ImageDraw.Draw(strokes)
+    d = ImageDraw.Draw(base, "RGBA")
+
+    for i in range(12):                          # หลักชั่วโมง = แท่ง lume
+        a = math.radians(i * 30 - 90)
+        r1, r2 = R - 42, R - 16
+        w = 13 if i % 3 == 0 else 7
+        x1, y1 = cx + r1 * math.cos(a), cy + r1 * math.sin(a)
+        x2, y2 = cx + r2 * math.cos(a), cy + r2 * math.sin(a)
+        d.line([(x1, y1), (x2, y2)], fill=ACC, width=w)
+        dg.line([(x1, y1), (x2, y2)], fill=(70, 190, 150), width=w + 3)
+
+    sec = now.second + now.microsecond / 1e6
+    mn = now.minute + sec / 60
+    hr = (now.hour % 12) + mn / 60
+
+    def hand(ang, length, width, back=22):
+        a = math.radians(ang - 90)
+        x2, y2 = cx + length * math.cos(a), cy + length * math.sin(a)
+        xb, yb = cx - back * math.cos(a), cy - back * math.sin(a)
+        d.line([(xb, yb), (x2, y2)], fill=ACC, width=width)
+        dg.line([(xb, yb), (x2, y2)], fill=(70, 190, 150), width=width + 3)
+
+    hand(hr * 30, R * 0.50, 16)                  # ชั่วโมง lume
+    hand(mn * 6, R * 0.72, 11)                   # นาที lume
+    a = math.radians(sec * 6 - 90)               # วินาที ส้ม (ไม่ lume)
+    d.line([(cx - 24 * math.cos(a), cy - 24 * math.sin(a)),
+            (cx + R * 0.80 * math.cos(a), cy + R * 0.80 * math.sin(a))],
+           fill=(255, 140, 60), width=3)
+    base = _glow_add(base, strokes, 15, 1.15)    # เรืองแสง
+    d = ImageDraw.Draw(base, "RGBA")
+    d.ellipse([cx - 11, cy - 11, cx + 11, cy + 11], fill=(150, 220, 190))
+    d.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=(20, 30, 26))
+    # ana-digi: ซ้าย=วัน ขวา=เวลาดิจิทัล lume (Casio)
+    lx = cx - R - (cx - R) * 0.5
+    rx = cx + R + (W - (cx + R)) * 0.5
+    _text_c(d, lx, cy - 26, now.strftime("%a").upper(), _f("sans", 66), (120, 210, 180))
+    _text_c(d, lx, cy + 40, now.strftime("%d %b").upper(), _f("mono", 34), (80, 150, 130))
+    _text_c(d, rx, cy - 20, now.strftime("%H:%M"), _f("nixie", 96), (150, 255, 210))
+    _text_c(d, rx, cy + 48, now.strftime(":%S"), _f("nixie", 44), (90, 180, 150))
+    return base
+
+
+# ── สไตล์: world (นาฬิกาโลก หลายเมือง) ────────────────────────────────────────
+_CITIES = [("BANGKOK", 7), ("TOKYO", 9), ("LONDON", 1), ("NEW YORK", -4), ("LOS ANGELES", -7)]
+# offset โดยประมาณ (ฤดูร้อน เหนือ) — ไม่คิด DST อัตโนมัติ
+
+
+def _r_world(W, H, now, t):
+    n = len(_CITIES)
+    colw = W / n
+    utc = datetime.now(timezone.utc)
+
+    def build(W, H):
+        img = Image.new("RGB", (W, H), (8, 12, 20))
+        d = ImageDraw.Draw(img)
+        for i in range(1, n):                    # เส้นแบ่งคอลัมน์
+            d.line([(i * colw, 40), (i * colw, H - 40)], fill=(26, 34, 48), width=2)
+        _text_c(d, W / 2, 26, "WORLD CLOCK", _f("mono", 24), (70, 110, 140))
+        return img
+    base = _bg("world", W, H, build)
+    d = ImageDraw.Draw(base, "RGBA")
+    for i, (city, off) in enumerate(_CITIES):
+        cx = colw * (i + 0.5)
+        lt = utc + timedelta(hours=off)
+        local = (off == 7)
+        accent = (255, 210, 130) if local else (200, 220, 235)
+        # ไอคอนกลางวัน/คืน (วงกลม=แดด, วงแหวน=จันทร์)
+        day = 6 <= lt.hour < 18
+        iy = 92
+        if day:
+            d.ellipse([cx - 13, iy - 13, cx + 13, iy + 13], fill=(255, 200, 90))
+        else:
+            d.ellipse([cx - 13, iy - 13, cx + 13, iy + 13], outline=(150, 175, 210), width=3)
+        _text_c(d, cx, 150, city, _f("mono", 28), accent)
+        _text_c(d, cx, H / 2 + 20, lt.strftime("%H:%M"), _f("sans", 96), accent)
+        _text_c(d, cx, H / 2 + 96, lt.strftime(":%S  %a %d").upper(),
+                _f("mono", 26), (120, 145, 170))
+        if local:
+            d.line([(cx - 90, 178), (cx + 90, 178)], fill=(255, 210, 130), width=3)
+            _text_c(d, cx, H - 34, "★ LOCAL", _f("mono", 22), (255, 210, 130))
+    return base
+
+
+# ── สไตล์: cyberpunk (นีออน HUD + chromatic glitch) ───────────────────────────
+_CYBER: dict = {}
+
+
+def _r_cyberpunk(W, H, now, t):
+    def build(W, H):
+        # ไล่เฉดม่วง→ดำ + กริด + สแกนไลน์
+        top = Image.new("RGB", (W, H), (26, 8, 40))
+        bot = Image.new("RGB", (W, H), (4, 2, 10))
+        m = Image.linear_gradient("L").resize((W, H))
+        img = Image.composite(bot, top, m)
+        d = ImageDraw.Draw(img, "RGBA")
+        for gx in range(0, W, 60):
+            d.line([(gx, 0), (gx, H)], fill=(120, 40, 160, 26), width=1)
+        for gy in range(0, H, 60):
+            d.line([(0, gy), (W, gy)], fill=(120, 40, 160, 26), width=1)
+        for sy in range(0, H, 4):                # scanlines
+            d.line([(0, sy), (W, sy)], fill=(0, 0, 0, 40), width=1)
+        # กรอบ HUD + มุม
+        d.rectangle([20, 20, W - 20, H - 20], outline=(0, 230, 255, 120), width=2)
+        for (mx, my, dx, dy) in [(20, 20, 1, 1), (W - 20, 20, -1, 1),
+                                 (20, H - 20, 1, -1), (W - 20, H - 20, -1, -1)]:
+            d.line([(mx, my), (mx + dx * 46, my)], fill=(255, 40, 170, 220), width=4)
+            d.line([(mx, my), (mx, my + dy * 46)], fill=(255, 40, 170, 220), width=4)
+        return img
+    base = _bg("cyberpunk", W, H, build)
+    cx, cy = W / 2, H / 2 - 10
+    txt = now.strftime("%H:%M:%S")
+    fnt = _f("nixie", 250)
+    # chromatic aberration (แดง/ฟ้าเหลื่อม) + glow
+    strokes = Image.new("RGB", (W, H), (0, 0, 0))
+    dg = ImageDraw.Draw(strokes)
+    dg.text((cx, cy), txt, font=fnt, fill=(0, 200, 255), anchor="mm")
+    base = _glow_add(base, strokes, 22, 1.0)
+    d = ImageDraw.Draw(base)
+    off = 6 + 3 * math.sin(t * 6)                # เหลื่อมสั่นเล็กน้อย
+    d.text((cx - off, cy), txt, font=fnt, fill=(255, 30, 120), anchor="mm")     # magenta
+    d.text((cx + off, cy), txt, font=fnt, fill=(0, 220, 255), anchor="mm")      # cyan
+    d.text((cx, cy), txt, font=fnt, fill=(235, 245, 255), anchor="mm")          # core
+    # accent HUD text
+    _text_c(d, 60, 60, "SYS.TIME", _f("mono", 30), (0, 230, 255), anchor="lm")
+    _text_c(d, W - 60, 60, now.strftime("%Y.%m.%d"), _f("mono", 30), (255, 40, 170), anchor="rm")
+    _text_c(d, cx, H - 52, "// NEO-BANGKOK  " + now.strftime("%A").upper() + "  2077 //",
+            _f("mono", 30), (0, 230, 255))
+    # แถบสแกนวิ่ง
+    sy = int((t * 120) % H)
+    d.line([(20, sy), (W - 20, sy)], fill=(255, 40, 170), width=2)
+    return base
+
+
 _RENDER = {
     "nixie": _r_nixie, "flip": _r_flip, "vfd": _r_vfd, "seg7": _r_seg7,
-    "lcd": _r_lcd, "analog": _r_analog, "neon": _r_neon, "word": _r_word,
+    "lcd": _r_lcd, "analog": _r_analog, "lumo": _r_lumo, "neon": _r_neon,
+    "word": _r_word, "world": _r_world, "cyberpunk": _r_cyberpunk,
     "minimal": _r_minimal,
 }
 
