@@ -481,7 +481,7 @@ class VideoPlayer:
         self.last = frame
         return True
 
-    def get_pil(self, elapsed, W, H, mode="band"):
+    def get_pil(self, elapsed, W, H, mode="band", pan=True):
         # เฟรมเป้าหมายตามเวลาจริง (วนด้วย modulo) → ข้ามเฟรมเองถ้าลูปช้ากว่า realtime
         if self.count > 0:
             target = int(elapsed * self.fps) % self.count
@@ -497,11 +497,11 @@ class VideoPlayer:
             guard += 1
         if self.last is None and not self._read_next():
             return None
-        return self._fit(self.last, W, H, mode, elapsed)
+        return self._fit(self.last, W, H, mode, elapsed, pan)
 
     PAN_PERIOD = 40.0        # วินาที/รอบแพน (ไป-กลับ) — ยิ่งมากยิ่งช้า
 
-    def _fit(self, bgr, W, H, mode, elapsed=0.0):
+    def _fit(self, bgr, W, H, mode, elapsed=0.0, pan=True):
         cv2 = self.cv2
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         vh, vw = rgb.shape[:2]
@@ -517,7 +517,8 @@ class VideoPlayer:
             nw, nh = max(W, int(round(vw * s))), max(H, int(round(vh * s)))
             resized = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA)
             # ease แบบ sine: เริ่มกลางเฟรม → เลื่อนขึ้น-ลง (หรือซ้าย-ขวา) นุ่ม ๆ ครบรอบใน PAN_PERIOD
-            ph = 0.5 + 0.5 * math.sin(2 * math.pi * elapsed / self.PAN_PERIOD)
+            # ปิดแพน (pan=False) = crop กลางตายตัว
+            ph = (0.5 + 0.5 * math.sin(2 * math.pi * elapsed / self.PAN_PERIOD)) if pan else 0.5
             x = int((nw - W) * ph) if nw > W else 0
             y = int((nh - H) * ph) if nh > H else 0
             canvas = resized[y:y + H, x:x + W]
@@ -1528,6 +1529,8 @@ def main():
                     help="เล่นไฟล์วิดีโอ (mp4/mkv/...) ลงจอแทน visualizer")
     ap.add_argument("--video-fit", choices=["band", "fit"], default="band",
                     help="band=คลิปกลางเต็มจอ (ตัดหัว-ท้าย) · fit=ย่อทั้งคลิป (แถบดำข้าง)")
+    ap.add_argument("--no-video-pan", action="store_true",
+                    help="ปิดแพนช้า ๆ ของโหมด band (crop กลางตายตัว)")
     ap.add_argument("--clock", nargs="?", const="nixie", choices=clocks.STYLES,
                     metavar="STYLE", help="โหมดนาฬิกา: " + " ".join(clocks.STYLES))
     ap.add_argument("--clock-cycle", action="store_true",
@@ -1536,6 +1539,7 @@ def main():
     args = ap.parse_args()
     args.video_path = args.video          # run() ใช้ video_path; --video เปิดโหมดเลย
     args.video = bool(args.video)
+    args.video_pan = not args.no_video_pan
     args.clock_style = args.clock         # run() ใช้ clock_style
     args.clock = bool(args.clock) or args.clock_cycle
     run(args)
@@ -1730,7 +1734,8 @@ def run(args, stop_evt=None):
                 cw, ch = (PANEL_H, PANEL_W) if args.portrait else (PANEL_W, PANEL_H)
                 try:
                     canvas = player.get_pil(loop_t - vp["t0"], cw, ch,
-                                            getattr(args, "video_fit", "band"))
+                                            getattr(args, "video_fit", "band"),
+                                            pan=getattr(args, "video_pan", True))
                 except Exception as e:
                     log("วิดีโอ error:", type(e).__name__, e); canvas = None
                 if canvas is None:                          # decode พลาด → กลับ visualizer เฟรมนี้

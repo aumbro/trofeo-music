@@ -52,6 +52,7 @@ class Cfg:
         self.video = False
         self.video_path = None
         self.video_fit = "band"    # band=คลิปกลางเต็มจอ · fit=ย่อทั้งคลิปมีแถบดำ
+        self.video_pan = True      # band: แพนช้า ๆ ในส่วนที่ล้นจอ
         # ── โหมดนาฬิกา (แนวนอนเสมอ) ──
         self.clock = False
         self.clock_style = "nixie"
@@ -143,6 +144,10 @@ def make_set_fit(val):
     return f
 
 
+def toggle_video_pan(icon, item):
+    cfg.video_pan = not cfg.video_pan
+
+
 def toggle_clock(icon, item):
     cfg.clock = not cfg.clock
 
@@ -211,6 +216,9 @@ MENU = Menu(
                  checked=lambda i: cfg.video_fit == "band", radio=True),
         MenuItem("ย่อทั้งคลิป (แถบดำข้าง)", make_set_fit("fit"),
                  checked=lambda i: cfg.video_fit == "fit", radio=True),
+        Menu.SEPARATOR,
+        MenuItem("แพนช้า ๆ (ส่วนที่ล้นจอ)", toggle_video_pan,
+                 checked=lambda i: cfg.video_pan),
     )),
     Menu.SEPARATOR,
     MenuItem("เนื้อเพลง (คาราโอเกะ)", toggle_lyrics, checked=lambda i: cfg.lyrics),
