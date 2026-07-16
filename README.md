@@ -115,6 +115,7 @@ python vibe_tray.py
 ไอคอน **waveform** โผล่ใน system tray → **คลิกขวา** เลือกได้สด (เปลี่ยนปุ๊บจอเปลี่ยนปั๊บ):
 - **แนว** — แนวนอน / แนวนอนเต็มจอ / แนวตั้ง
 - **Visualizer** — classic / dots / bars / ribbon / wave / random
+- **นาฬิกา** — 9 สไตล์วินเทจ (Nixie/Flip/VFD/7-seg/LCD/Analog/Neon/Word/Minimal) (ดูล่าง)
 - **โหมดวิดีโอ** — เล่นไฟล์วิดีโอลงจอแทน visualizer (ดูล่าง)
 - **เนื้อเพลง · ClaudePix · dots กลับหัว** — เปิด/ปิด
 - **ออก**
@@ -130,6 +131,22 @@ python vibe_tray.py
 
 CLI: `python vibe.py --video CLIP.mp4 --video-fit band` (ต้องมี `pip install opencv-python`)
 > วิดีโอเล่นเงียบ (จอไม่มีลำโพง) — เป็นภาพประกอบ ไม่ sync กับเสียง Spotify/YouTube
+
+### 🕰️ โหมดนาฬิกา (9 สไตล์ เน้นวินเทจ)
+
+เมนู **นาฬิกา →** เลือกสไตล์ (แนวนอนเสมอ) — วาดเองด้วย PIL ทั้งหมด (7-segment/glow/หน้าปัด):
+
+| วินเทจ | | โมเดิร์น | |
+|---|---|---|---|
+| **Nixie** | หลอดเรืองส้ม + เงาแก้ว + ghost | **Neon** | หลอดนีออนเรือง |
+| **Flip** | ป้ายพลิก split-flap | **Word** | นาฬิกาคำ (IT IS FIVE PAST TEN) |
+| **VFD** | จอเขียว-ฟ้าเรือง + mesh | **Minimal** | ตัวเลขบาง เรียบ |
+| **7-Segment** | LED แดง (นาฬิกาปลุก) | | |
+| **LCD** | เขียวมะกอก (Casio) + ghost | | |
+| **Analog** | เข็ม เลขโรมัน หน้าครีม + แผงวัน/วันที่ | | |
+
+**หมุนเวียนทุกสไตล์** = สลับอัตโนมัติทุก 45 วิ
+CLI: `python vibe.py --clock nixie` · `--clock-cycle` (โค้ดสไตล์อยู่ใน `clocks.py`)
 
 ### แพ็กเป็น .exe (ไม่ต้องมี Python)
 

@@ -41,6 +41,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -50,6 +51,8 @@ except Exception:
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+import clocks
 
 
 def log(*a):
@@ -1520,10 +1523,16 @@ def main():
                     help="เล่นไฟล์วิดีโอ (mp4/mkv/...) ลงจอแทน visualizer")
     ap.add_argument("--video-fit", choices=["band", "fit"], default="band",
                     help="band=คลิปกลางเต็มจอ (ตัดหัว-ท้าย) · fit=ย่อทั้งคลิป (แถบดำข้าง)")
+    ap.add_argument("--clock", nargs="?", const="nixie", choices=clocks.STYLES,
+                    metavar="STYLE", help="โหมดนาฬิกา: " + " ".join(clocks.STYLES))
+    ap.add_argument("--clock-cycle", action="store_true",
+                    help="หมุนเวียนสไตล์นาฬิกาทุก 45 วิ")
     ap.add_argument("--pid", type=lambda s: int(s, 0), default=0x5408)
     args = ap.parse_args()
     args.video_path = args.video          # run() ใช้ video_path; --video เปิดโหมดเลย
     args.video = bool(args.video)
+    args.clock_style = args.clock         # run() ใช้ clock_style
+    args.clock = bool(args.clock) or args.clock_cycle
     run(args)
 
 
@@ -1646,6 +1655,10 @@ def run(args, stop_evt=None):
     if args.viz == "random":
         log(f"โหมด random — สุ่มสลับ visualizer (เริ่ม {rnd_viz})")
 
+    # ── โหมดนาฬิกา: เปิด/ปิด/เปลี่ยนสไตล์ได้สด (แนวนอนเสมอ) ──
+    clk = {"style": None}
+    CLK_CYCLE_EVERY = 45.0                # หมุนเวียนสไตล์ทุก 45 วิ
+
     # ── โหมดวิดีโอ: เปิด/ปิด/เปลี่ยนไฟล์ได้สดจาก tray (อ่าน args ทุกเฟรม) ──
     vp = {"player": None, "path": None, "t0": 0.0}
 
@@ -1707,6 +1720,7 @@ def run(args, stop_evt=None):
                 else:
                     snap["_viz"] = rnd_viz
             player = ensure_video()
+            use_angle = angle
             if player is not None:                          # โหมดวิดีโอ: เฟรมวิดีโอแทน visualizer
                 cw, ch = (PANEL_H, PANEL_W) if args.portrait else (PANEL_W, PANEL_H)
                 try:
@@ -1716,9 +1730,19 @@ def run(args, stop_evt=None):
                     log("วิดีโอ error:", type(e).__name__, e); canvas = None
                 if canvas is None:                          # decode พลาด → กลับ visualizer เฟรมนี้
                     canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
+            elif getattr(args, "clock", False):             # โหมดนาฬิกา (แนวนอนเสมอ)
+                if getattr(args, "clock_cycle", False):
+                    style = clocks.STYLES[int(t / CLK_CYCLE_EVERY) % len(clocks.STYLES)]
+                else:
+                    style = getattr(args, "clock_style", None) or "nixie"
+                if style != clk["style"]:
+                    clk["style"] = style
+                    log("นาฬิกา:", clocks.STYLE_LABELS.get(style, style))
+                canvas = clocks.render(style, PANEL_W, PANEL_H, datetime.now(), t)
+                use_angle = base                            # นาฬิกาไม่หมุนตาม portrait
             else:
                 canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
-            wire = to_wire(canvas, info["width"], info["height"], angle)
+            wire = to_wire(canvas, info["width"], info["height"], use_angle)
             try:
                 lcd.send_jpeg(to_jpeg(wire, args.quality))
             except Exception as e:            # USB glitch (I/O error ฯลฯ) → reconnect ไม่ crash

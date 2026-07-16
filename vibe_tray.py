@@ -22,6 +22,7 @@ from pystray import Menu, MenuItem
 from PIL import Image, ImageDraw
 
 import vibe
+import clocks
 
 
 # ── config (args-like) ที่เมนูแก้ได้สด — ชื่อ attr ต้องตรงกับที่ vibe.run ใช้ ──
@@ -51,6 +52,10 @@ class Cfg:
         self.video = False
         self.video_path = None
         self.video_fit = "band"    # band=คลิปกลางเต็มจอ · fit=ย่อทั้งคลิปมีแถบดำ
+        # ── โหมดนาฬิกา (แนวนอนเสมอ) ──
+        self.clock = False
+        self.clock_style = "nixie"
+        self.clock_cycle = False
 
 
 cfg = Cfg()
@@ -138,6 +143,30 @@ def make_set_fit(val):
     return f
 
 
+def toggle_clock(icon, item):
+    cfg.clock = not cfg.clock
+
+
+def toggle_clock_cycle(icon, item):
+    cfg.clock_cycle = not cfg.clock_cycle
+    if cfg.clock_cycle:
+        cfg.clock = True
+
+
+def make_set_clock(val):
+    def f(icon, item):
+        cfg.clock_style = val
+        cfg.clock = True
+        cfg.clock_cycle = False
+    return f
+
+
+def clock_item(key):
+    return MenuItem(clocks.STYLE_LABELS.get(key, key), make_set_clock(key),
+                    checked=lambda i, k=key: cfg.clock_style == k and not cfg.clock_cycle,
+                    radio=True)
+
+
 def do_quit(icon, item):
     stop_evt.set()
     icon.stop()
@@ -166,6 +195,14 @@ MENU = Menu(
         viz_item("random (สุ่มสลับ)", "random"),
     )),
     Menu.SEPARATOR,
+    MenuItem("นาฬิกา", Menu(
+        MenuItem("เปิด/ปิดนาฬิกา", toggle_clock, checked=lambda i: cfg.clock),
+        Menu.SEPARATOR,
+        *[clock_item(k) for k in clocks.STYLES],
+        Menu.SEPARATOR,
+        MenuItem("หมุนเวียนทุกสไตล์ (45วิ)", toggle_clock_cycle,
+                 checked=lambda i: cfg.clock_cycle),
+    )),
     MenuItem("โหมดวิดีโอ", Menu(
         MenuItem("เปิด/ปิดวิดีโอ", toggle_video, checked=lambda i: cfg.video),
         MenuItem("เลือกไฟล์วิดีโอ...", pick_video),
