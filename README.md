@@ -132,7 +132,7 @@ python vibe_tray.py
 CLI: `python vibe.py --video CLIP.mp4 --video-fit band` (ต้องมี `pip install opencv-python`)
 > วิดีโอเล่นเงียบ (จอไม่มีลำโพง) — เป็นภาพประกอบ ไม่ sync กับเสียง Spotify/YouTube
 
-### 🕰️ โหมดนาฬิกา (12 สไตล์ เน้นวินเทจ)
+### 🕰️ โหมดนาฬิกา (13 สไตล์ เน้นวินเทจ)
 
 เมนู **นาฬิกา →** เลือกสไตล์ (แนวนอนเสมอ) — วาดเองด้วย PIL ทั้งหมด (7-segment/glow/หน้าปัด):
 
@@ -145,6 +145,7 @@ CLI: `python vibe.py --video CLIP.mp4 --video-fit band` (ต้องมี `pip
 | **LCD** | เขียวมะกอก (Casio) + ghost | **Minimal** | ตัวเลขบาง เรียบ |
 | **Analog** | เข็ม เลขโรมัน หน้าครีม + แผงวัน | | |
 | **เข็มเรืองแสง** | Casio กลางคืน (lume) + ana-digi | | |
+| **กลไก** | เฟืองทองเหลืองหมุนจริง + balance wheel | | |
 
 **หมุนเวียนทุกสไตล์** = สลับอัตโนมัติทุก 45 วิ
 CLI: `python vibe.py --clock nixie` · `--clock-cycle` (โค้ดสไตล์อยู่ใน `clocks.py`)
