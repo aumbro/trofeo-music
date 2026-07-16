@@ -16,18 +16,19 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone, timedelta
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
 
-STYLES = ["nixie", "flip", "vfd", "seg7", "lcd", "analog", "lumo", "mech",
+STYLES = ["nixie", "flip", "vfd", "seg7", "lcd", "analog", "lumo", "mech", "sun",
           "neon", "word", "world", "cyberpunk", "minimal"]
 STYLE_LABELS = {
     "nixie": "Nixie (หลอดเรืองส้ม)", "flip": "Flip (ป้ายพลิก)",
     "vfd": "VFD (จอเขียวเรือง)", "seg7": "7-Segment (LED แดง)",
     "lcd": "LCD (Casio เขียว)", "analog": "เข็ม (เลขโรมัน วินเทจ)",
     "lumo": "เข็มเรืองแสง (Casio กลางคืน)", "mech": "กลไก (เฟืองหมุน)",
-    "neon": "Neon (นีออน)", "word": "Word (นาฬิกาคำ)",
-    "world": "World (นาฬิกาโลก)", "cyberpunk": "Cyberpunk (นีออน HUD)",
-    "minimal": "Minimal (เรียบ)",
+    "sun": "ตะวัน (ไล่แสงตามเวลาจริง)", "neon": "Neon (นีออน)",
+    "word": "Word (นาฬิกาคำ)", "world": "World (นาฬิกาโลก)",
+    "cyberpunk": "Cyberpunk (นีออน HUD)", "minimal": "Minimal (เรียบ)",
 }
 
 # ── fonts ────────────────────────────────────────────────────────────────────
@@ -652,50 +653,80 @@ _BRASS_L = (232, 198, 120)
 _STEEL = (150, 155, 165)
 
 
-def _gear_sprite(teeth, r_out, hole=0.32, spokes=5, color=_BRASS):
-    """วาดเฟือง 1 ตัวเป็น RGBA sprite (ฟันสี่เหลี่ยมมน + ซี่ล้อ + รูแกน)"""
-    key = (teeth, r_out, hole, spokes, color)
+def _gear_sprite(teeth, r_out, hole=0.30, spokes=5, color=_BRASS, pointed=False):
+    """วาดเฟือง 1 ตัวเป็น (sprite, shadow) RGBA — มี shading โลหะ (แสงบนซ้าย+เงาริม)
+    pointed=True = ฟันแหลมเอียงแบบ escape wheel"""
+    key = (teeth, r_out, hole, spokes, color, pointed)
     if key in _GEARS:
         return _GEARS[key]
-    S = r_out * 2 + 8
-    img = Image.new("RGBA", (int(S), int(S)), (0, 0, 0, 0))
+    S = int(r_out * 2 + 12)
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     c = S / 2
-    r_root = r_out * 0.86                     # โคนฟัน
-    # ฟัน: polygon รอบวง
+    r_root = r_out * 0.84
     tw = math.pi * 2 / teeth
     for i in range(teeth):
         a0 = i * tw
-        pts = []
-        for (rr, da) in ((r_root, -0.5 * tw * 0.9), (r_out, -0.22 * tw),
-                         (r_out, 0.22 * tw), (r_root, 0.5 * tw * 0.9)):
-            pts.append((c + rr * math.cos(a0 + da), c + rr * math.sin(a0 + da)))
+        if pointed:                            # ฟันเลื่อยเอียง (escape)
+            shape = ((r_root, -0.30 * tw), (r_out, -0.02 * tw), (r_root, 0.14 * tw))
+        else:                                  # ฟันสี่เหลี่ยมคางหมู
+            shape = ((r_root, -0.45 * tw), (r_out, -0.20 * tw),
+                     (r_out, 0.20 * tw), (r_root, 0.45 * tw))
+        pts = [(c + rr * math.cos(a0 + da), c + rr * math.sin(a0 + da))
+               for rr, da in shape]
         d.polygon(pts, fill=color)
     d.ellipse([c - r_root, c - r_root, c + r_root, c + r_root], fill=color)
-    # แผ่นในเข้มกว่า + ซี่ล้อ (เจาะช่อง)
-    r_in = r_root * 0.82
-    d.ellipse([c - r_in, c - r_in, c + r_in, c + r_in], fill=_BRASS_D + (255,))
+    r_in = r_root * 0.80
+    dk = tuple(int(v * 0.72) for v in color)
+    d.ellipse([c - r_in, c - r_in, c + r_in, c + r_in], fill=dk + (255,))
     r_h = r_out * hole
-    if spokes > 0:
-        # ช่องว่างระหว่างซี่ = วาดวงในสีโปร่งเป็น pie แล้วเว้นซี่
+    if spokes > 0:                             # เจาะช่องระหว่างซี่ล้อ
         for i in range(spokes):
-            a0 = i * 2 * math.pi / spokes
-            a1 = a0 + 2 * math.pi / spokes * 0.62
-            d.pieslice([c - r_in * 0.92, c - r_in * 0.92, c + r_in * 0.92, c + r_in * 0.92],
-                       math.degrees(a0), math.degrees(a1), fill=(0, 0, 0, 0))
-    # ดุมกลาง + รูแกน
-    d.ellipse([c - r_h - 10, c - r_h - 10, c + r_h + 10, c + r_h + 10], fill=color)
-    d.ellipse([c - r_h, c - r_h, c + r_h, c + r_h], fill=(24, 20, 16, 255))
-    # ไฮไลต์ขอบบน (แสงตกทองเหลือง)
-    d.arc([c - r_root, c - r_root, c + r_root, c + r_root], 200, 320,
-          fill=_BRASS_L + (200,), width=3)
-    _GEARS[key] = img
-    return img
+            a0 = math.degrees(i * 2 * math.pi / spokes)
+            d.pieslice([c - r_in * 0.94, c - r_in * 0.94, c + r_in * 0.94, c + r_in * 0.94],
+                       a0, a0 + 360 / spokes * 0.62, fill=(0, 0, 0, 0))
+    d.ellipse([c - r_h - 12, c - r_h - 12, c + r_h + 12, c + r_h + 12], fill=color)
+    d.ellipse([c - r_h, c - r_h, c + r_h, c + r_h], fill=(16, 13, 10, 255))
+    # ── shading โลหะ (numpy): แสงบนซ้าย + มืดตามรัศมี + glint ขอบ + ลาย brushed วง ──
+    a = np.asarray(img).astype(np.float32)
+    yy, xx = np.mgrid[0:S, 0:S]
+    dx = (xx - c) / r_out
+    dy = (yy - c) / r_out
+    rr = np.sqrt(dx * dx + dy * dy)
+    shade = (1.06 - 0.16 * np.clip(rr, 0, 1.1)
+             + 0.16 * (-(dx * 0.55 + dy * 0.83))
+             + 0.20 * np.exp(-((rr - 0.92) ** 2) / 0.0015)
+             + 0.035 * np.sin(rr * 70.0))
+    a[..., :3] = np.clip(a[..., :3] * shade[..., None], 0, 255)
+    spr = Image.fromarray(a.astype(np.uint8), "RGBA")
+    # เงาใต้เฟือง (precompute จาก alpha — ไม่ต้องหมุนตาม เพราะทรงเกือบกลม)
+    al = spr.getchannel("A").filter(ImageFilter.GaussianBlur(8)).point(lambda v: int(v * 0.45))
+    zero = al.point(lambda v: 0)
+    shadow = Image.merge("RGBA", (zero, zero, zero, al))
+    _GEARS[key] = (spr, shadow)
+    return _GEARS[key]
 
 
-def _paste_gear(base, cx, cy, sprite, angle_deg):
-    g = sprite.rotate(-angle_deg, resample=Image.BICUBIC)
-    base.paste(g, (int(cx - g.width / 2), int(cy - g.height / 2)), g)
+def _paste_gear(base, cx, cy, gs, angle_deg):
+    spr, shadow = gs
+    g = spr.rotate(-angle_deg, resample=Image.BICUBIC)
+    x, y = int(cx - g.width / 2), int(cy - g.height / 2)
+    base.paste(shadow, (x + 7, y + 12), shadow)
+    base.paste(g, (x, y), g)
+
+
+def _rp(r_out):
+    return r_out * 0.90                        # pitch radius (วงขบ)
+
+
+def _mesh(x1, y1, r1, n1, a1, r2, n2, theta):
+    """วางเฟืองลูกให้ขบเฟืองแม่ที่มุม theta (องศา) — คืน (x2, y2, a2)
+    a2 จัดเฟสให้ฟันสอดร่องพอดี และหมุนสวนทางตามอัตราทด n1/n2"""
+    dist = _rp(r1) + _rp(r2)
+    x2 = x1 + dist * math.cos(math.radians(theta))
+    y2 = y1 + dist * math.sin(math.radians(theta))
+    a2 = theta + 180 + 180.0 / n2 - (n1 / n2) * (a1 - theta)
+    return x2, y2, a2
 
 
 def _r_mech(W, H, now, t):
@@ -703,94 +734,268 @@ def _r_mech(W, H, now, t):
     R = H / 2 - 26
 
     def build(W, H):
-        # พื้นโลหะเข้ม + แผ่น movement + สกรู
-        img = Image.new("RGB", (W, H), (26, 22, 18))
-        v = _vignette(W, H, 80, 255)
+        # แผ่น movement เข้ม + bridge บน-ล่าง + perlage (ลายวงกลมขัด) + สกรู chaton
+        img = Image.new("RGB", (W, H), (17, 14, 11))
+        v = _vignette(W, H, 70, 255)
         img = ImageChops.multiply(img, Image.merge("RGB", (v, v, v)))
         d = ImageDraw.Draw(img, "RGBA")
-        # แผ่น bridge บน-ล่าง (สไตล์ movement)
-        d.rounded_rectangle([40, 34, W - 40, 100], radius=30, fill=(38, 32, 26, 255),
-                            outline=(70, 58, 42, 255), width=2)
-        d.rounded_rectangle([40, H - 100, W - 40, H - 34], radius=30, fill=(38, 32, 26, 255),
-                            outline=(70, 58, 42, 255), width=2)
-        for sx in (70, W - 70, W / 2 - 400, W / 2 + 400):
+        for (y0, y1) in ((30, 102), (H - 102, H - 30)):
+            d.rounded_rectangle([36, y0, W - 36, y1], radius=32, fill=(33, 27, 21, 255),
+                                outline=(62, 51, 38, 255), width=2)
+            d.line([(48, y0 + 6), (W - 48, y0 + 6)], fill=(80, 66, 48, 90), width=2)
+            # perlage สองแถว
+            for row, yy in enumerate((y0 + 24, y0 + 50)):
+                for gx in range(60 + row * 15, W - 50, 30):
+                    d.ellipse([gx - 17, yy - 17, gx + 17, yy + 17],
+                              outline=(255, 232, 180, 9), width=5)
+        for sx in (72, W - 72, cx - 430, cx + 430):
             for sy in (66, H - 66):
-                d.ellipse([sx - 9, sy - 9, sx + 9, sy + 9], fill=(110, 116, 126, 255))
-                d.line([(sx - 6, sy - 6), (sx + 6, sy + 6)], fill=(60, 62, 70, 255), width=3)
+                ha = (sx * 7 + sy) % 180                     # มุมร่องสกรูต่างกัน
+                d.ellipse([sx - 13, sy - 13, sx + 13, sy + 13],
+                          outline=(150, 122, 70, 255), width=3)   # chaton ทอง
+                d.ellipse([sx - 9, sy - 9, sx + 9, sy + 9], fill=(118, 122, 132, 255))
+                dx0 = 7 * math.cos(math.radians(ha))
+                dy0 = 7 * math.sin(math.radians(ha))
+                d.line([(sx - dx0, sy - dy0), (sx + dx0, sy + dy0)],
+                       fill=(52, 54, 62, 255), width=3)
         return img
     base = _bg("mech", W, H, build).convert("RGBA")
 
     sec = now.second + now.microsecond / 1e6
     mn = now.minute + sec / 60
     hr = (now.hour % 12) + mn / 60
+    jewels = []                                  # เก็บจุดแกนไว้วาดทับทิมทีหลัง
 
-    # ── ขบวนเฟือง (gear train) ซ้าย-ขวาของหน้าปัด ──
-    # มุมหมุนผูกกับเวลาจริง: เฟืองวินาที 1 รอบ/นาที, ทดช้าลงเป็นชั้น ๆ
-    a_fast = sec * 6.0                          # 1 รอบ/นาที
-    a_mid = -a_fast / 3.2                       # ทด + สวนทาง
-    a_slow = a_fast / 9.5
-    a_esc = math.degrees(math.sin(t * math.pi * 2 * 2.5) * 0.16)  # escapement กระตุก
+    # ── ฝั่งซ้าย: ขบวนเฟืองขบกันจริง (ระยะ=ผลรวม pitch radius, เฟสocked) ──
+    n1, r1 = 30, 168
+    x1, y1 = W * 0.150, cy + 6
+    a1 = -sec * 3.0                              # 1 รอบ/2 นาที
+    n2, r2 = 14, 80
+    x2, y2, a2 = _mesh(x1, y1, r1, n1, a1, r2, n2, -30)
+    n3, r3 = 22, 118
+    x3, y3, a3 = _mesh(x2, y2, r2, n2, a2, r3, n3, 48)
+    _paste_gear(base, x3, y3, _gear_sprite(n3, r3, hole=0.22, spokes=5), a3)
+    _paste_gear(base, x2, y2, _gear_sprite(n2, r2, hole=0.30, spokes=0), a2)
+    _paste_gear(base, x1, y1, _gear_sprite(n1, r1, hole=0.16, spokes=5), a1)
+    jewels += [(x1, y1), (x2, y2), (x3, y3)]
 
-    g_big = _gear_sprite(24, 150)
-    g_mid = _gear_sprite(16, 100)
-    g_sml = _gear_sprite(10, 62, spokes=0)
-    g_esc = _gear_sprite(30, 118, hole=0.18, spokes=4, color=_STEEL)
+    # ── ฝั่งขวา: escapement — escape wheel เดินกระตุก + เฟืองส่งกำลัง ──
+    nE, rE = 15, 110
+    xE, yE = W * 0.845 + 40, cy + 8
+    beats = t * 5.0                              # 2.5Hz × 2 จังหวะ
+    frac = beats % 1.0
+    snap = min(1.0, frac * 7.0)                  # สแนปเร็วแล้วหยุดรอ (จังหวะ escapement จริง)
+    aE = -(math.floor(beats) + snap) * (360.0 / nE) / 2
+    n4, r4 = 24, 96
+    x4, y4, a4 = _mesh(xE, yE, rE, nE, aE, r4, n4, 148)
+    _paste_gear(base, x4, y4, _gear_sprite(n4, r4, hole=0.26, spokes=5), a4)
+    _paste_gear(base, xE, yE, _gear_sprite(nE, rE, hole=0.14, spokes=4,
+                                           color=_STEEL, pointed=True), aE)
+    jewels += [(xE, yE), (x4, y4)]
 
-    LX = W * 0.155                              # ศูนย์กลางฝั่งซ้าย
-    _paste_gear(base, LX - 130, cy - 60, g_mid, a_mid + 12)
-    _paste_gear(base, LX + 90, cy + 88, g_sml, -a_fast * 1.6)
-    _paste_gear(base, LX, cy, g_big, a_slow)
-    # balance wheel (ล้อจักร) — แกว่งไปมา
-    bx, by = LX + 210, cy - 108
+    # ── balance wheel + hairspring (จักร 2.5Hz) ──
+    bx, by = W * 0.845 - 150, cy - 118
+    rb = 90
+    phase = t * math.pi * 2 * 2.5
+    swing = math.sin(phase) * 42
     d = ImageDraw.Draw(base)
-    swing = math.sin(t * math.pi * 2 * 2.5) * 40    # 2.5Hz
-    d.ellipse([bx - 74, by - 74, bx + 74, by + 74], outline=_BRASS_L, width=8)
-    for i in range(3):
-        a = math.radians(swing + i * 120)
-        d.line([(bx, by), (bx + 66 * math.cos(a), by + 66 * math.sin(a))],
-               fill=_BRASS_L, width=6)
-    d.ellipse([bx - 10, by - 10, bx + 10, by + 10], fill=(180, 40, 60))  # ทับทิม
+    d.ellipse([bx - rb - 6, by - rb - 6, bx + rb + 6, by + rb + 6],
+              fill=(0, 0, 0, 70))                          # เงาใต้จักร
+    # hairspring ก้นหอย (หายใจตามจังหวะ)
+    breath = 1.0 + 0.07 * math.sin(phase + math.pi / 2)
+    coils, steps = 4.2, 96
+    pts = []
+    for i in range(steps + 1):
+        ph = i / steps * coils * 2 * math.pi
+        rr = 7 + (ph / (coils * 2 * math.pi)) * rb * 0.52 * breath
+        pts.append((bx + rr * math.cos(ph + math.radians(swing)),
+                    by + rr * math.sin(ph + math.radians(swing))))
+    d.line(pts, fill=(150, 136, 104), width=2)
+    # ขอบจักรหนา + สกรูถ่วงบนขอบ + ก้าน
+    d.ellipse([bx - rb, by - rb, bx + rb, by + rb], outline=_BRASS_L, width=10)
+    d.ellipse([bx - rb + 12, by - rb + 12, bx + rb - 12, by + rb - 12],
+              outline=(120, 96, 52, 140), width=2)
+    for k in range(8):
+        a = math.radians(swing + k * 45)
+        px, py = bx + (rb - 5) * math.cos(a), by + (rb - 5) * math.sin(a)
+        d.ellipse([px - 4, py - 4, px + 4, py + 4], fill=(70, 58, 40))
+    a = math.radians(swing)
+    d.line([(bx - (rb - 6) * math.cos(a), by - (rb - 6) * math.sin(a)),
+            (bx + (rb - 6) * math.cos(a), by + (rb - 6) * math.sin(a))],
+           fill=_BRASS_L, width=8)
+    jewels.append((bx, by))
 
-    RX = W * 0.845
-    _paste_gear(base, RX + 120, cy - 70, g_mid, -a_mid)
-    _paste_gear(base, RX - 100, cy + 90, g_sml, a_fast * 1.6 + 18)
-    _paste_gear(base, RX, cy, g_esc, a_fast + a_esc)
-    # ทับทิม jewel bearing ประดับ
-    for (jx, jy) in ((RX, cy), (LX, cy)):
-        d.ellipse([jx - 7, jy - 7, jx + 7, jy + 7], fill=(190, 44, 66))
-
-    # ── หน้าปัด skeleton กลาง ──
+    # ── หน้าปัด skeleton กลาง: เฟืองใหญ่โปร่งหมุนใต้เข็ม ──
+    _paste_gear(base, cx, cy, _gear_sprite(36, 130, hole=0.42, spokes=6), -mn * 0.75)
+    d = ImageDraw.Draw(base)
     d.ellipse([cx - R, cy - R, cx + R, cy + R], outline=_BRASS, width=6)
-    d.ellipse([cx - R + 14, cy - R + 14, cx + R - 14, cy + R - 14],
-              outline=_BRASS_D, width=2)
-    for i in range(12):
-        a = math.radians(i * 30 - 90)
-        r1, r2 = R - 38, R - 16
-        w = 7 if i % 3 == 0 else 4
-        d.line([(cx + r1 * math.cos(a), cy + r1 * math.sin(a)),
-                (cx + r2 * math.cos(a), cy + r2 * math.sin(a))], fill=_BRASS_L, width=w)
-    # เฟืองเล็กหมุนใต้เข็ม (โชว์กลไกทะลุ)
-    _paste_gear(base, cx, cy, _gear_sprite(12, 74, hole=0.16, spokes=4), a_fast * 2.0)
+    d.ellipse([cx - R + 13, cy - R + 13, cx + R - 13, cy + R - 13],
+              outline=(120, 96, 52), width=2)
+    for i in range(60):                          # ขีดนาทีรอบวง
+        a = math.radians(i * 6 - 90)
+        r1_, r2_ = (R - 36, R - 15) if i % 5 == 0 else (R - 25, R - 15)
+        w = 6 if i % 15 == 0 else (4 if i % 5 == 0 else 2)
+        d.line([(cx + r1_ * math.cos(a), cy + r1_ * math.sin(a)),
+                (cx + r2_ * math.cos(a), cy + r2_ * math.sin(a))],
+               fill=_BRASS_L if i % 5 == 0 else (150, 128, 92), width=w)
 
-    def hand(ang, length, width, color, back=20):
+    # ── เข็ม breguet น้ำเงินเหล็ก (โพลิกอนเรียวปลาย + วงพระจันทร์) ──
+    BLUE, BLUE_L = (46, 72, 152), (92, 122, 205)
+
+    def hand(ang, L, wid, back=26):
         a = math.radians(ang - 90)
-        x2, y2 = cx + length * math.cos(a), cy + length * math.sin(a)
-        xb, yb = cx - back * math.cos(a), cy - back * math.sin(a)
-        d.line([(xb, yb), (x2, y2)], fill=color, width=width)
+        ux, uy = math.cos(a), math.sin(a)
+        px, py = -uy, ux
+        d.polygon([(cx - back * ux + wid * .5 * px, cy - back * uy + wid * .5 * py),
+                   (cx + L * ux, cy + L * uy),
+                   (cx - back * ux - wid * .5 * px, cy - back * uy - wid * .5 * py)],
+                  fill=BLUE)
+        d.line([(cx - back * ux, cy - back * uy),
+                (cx + L * 0.97 * ux, cy + L * 0.97 * uy)], fill=BLUE_L, width=2)
+        rr = L * 0.70                            # วงพระจันทร์ breguet
+        hx, hy = cx + rr * ux, cy + rr * uy
+        d.ellipse([hx - 11, hy - 11, hx + 11, hy + 11], outline=BLUE, width=6)
 
-    # เข็ม breguet สีน้ำเงินเหล็ก + วงพระจันทร์ปลายเข็ม
-    BLUE = (58, 84, 160)
-    hand(hr * 30, R * 0.50, 12, BLUE)
-    hand(mn * 6, R * 0.74, 8, BLUE)
-    for (ang, rr) in ((hr * 30, R * 0.36), (mn * 6, R * 0.56)):
-        a = math.radians(ang - 90)
-        px, py = cx + rr * math.cos(a), cy + rr * math.sin(a)
-        d.ellipse([px - 9, py - 9, px + 9, py + 9], outline=BLUE, width=5)
-    hand(sec * 6, R * 0.82, 3, (200, 60, 70))
-    d.ellipse([cx - 12, cy - 12, cx + 12, cy + 12], fill=_BRASS)
-    d.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=(190, 44, 66))
+    hand(hr * 30, R * 0.52, 20)
+    hand(mn * 6, R * 0.78, 13)
+    a = math.radians(sec * 6 - 90)
+    d.line([(cx - 34 * math.cos(a), cy - 34 * math.sin(a)),
+            (cx + R * 0.86 * math.cos(a), cy + R * 0.86 * math.sin(a))],
+           fill=(198, 56, 60), width=3)
+    d.ellipse([cx - 34 * math.cos(a) - 8, cy - 34 * math.sin(a) - 8,
+               cx - 34 * math.cos(a) + 8, cy - 34 * math.sin(a) + 8],
+              fill=(198, 56, 60))                # ตุ้มถ่วงเข็มวินาที
 
+    # ── ทับทิม jewel bearing + chaton ทองที่แกนทุกจุด ──
+    jewels.append((cx, cy))
+    for (jx, jy) in jewels:
+        d.ellipse([jx - 11, jy - 11, jx + 11, jy + 11], outline=(170, 140, 74), width=3)
+        d.ellipse([jx - 7, jy - 7, jx + 7, jy + 7], fill=(168, 32, 52))
+        d.ellipse([jx - 3, jy - 5, jx + 1, jy - 1], fill=(235, 120, 130))  # ประกายบนทับทิม
     return base.convert("RGB")
+
+
+# ── สไตล์: sun (ไล่แสงตะวัน — ท้องฟ้าเปลี่ยนสีตามเวลาจริง) ─────────────────────
+# keyframe ท้องฟ้า: (ชั่วโมง, สีบน, สีกลาง, สีขอบฟ้า)
+_SKY = [
+    (0.0,  (3, 6, 20),    (8, 12, 34),    (14, 20, 48)),
+    (4.7,  (6, 10, 32),   (24, 22, 58),   (60, 40, 70)),
+    (6.0,  (30, 50, 110), (120, 80, 120), (255, 150, 90)),    # รุ่งอรุณ
+    (7.5,  (70, 130, 215), (130, 180, 235), (220, 210, 190)),
+    (12.0, (52, 120, 230), (120, 180, 245), (170, 215, 250)),  # เที่ยง
+    (16.5, (60, 110, 215), (140, 170, 230), (215, 190, 160)),
+    (18.3, (70, 60, 140), (180, 90, 110), (255, 130, 70)),     # อาทิตย์ตก
+    (19.6, (18, 20, 64),  (50, 36, 86),   (110, 60, 86)),
+    (21.0, (6, 9, 28),    (12, 16, 42),   (20, 26, 56)),
+    (24.0, (3, 6, 20),    (8, 12, 34),    (14, 20, 48)),
+]
+_SUNRISE, _SUNSET = 6.0, 18.75
+_SUN_SCENE = {"key": None, "img": None}
+_SUN_MTN: dict = {}
+
+
+def _sky_cols(td):
+    for i in range(len(_SKY) - 1):
+        h0, *c0 = _SKY[i]
+        h1, *c1 = _SKY[i + 1]
+        if h0 <= td <= h1:
+            f = (td - h0) / (h1 - h0)
+            return [tuple(int(a + (b - a) * f) for a, b in zip(ca, cb))
+                    for ca, cb in zip(c0, c1)]
+    return list(_SKY[0][1:])
+
+
+def _sun_mountains(W, H, horizon):
+    key = (W, H)
+    if key not in _SUN_MTN:
+        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(ov)
+        far = [(0, horizon)]
+        for x in range(0, W + 40, 40):
+            far.append((x, horizon - 34 - 52 * abs(math.sin(x * 0.0043 + 1.3))
+                        - 20 * abs(math.sin(x * 0.011 + 0.4))))
+        far += [(W, horizon)]
+        d.polygon(far, fill=(24, 28, 42, 255))
+        near = [(0, horizon)]
+        for x in range(0, W + 30, 30):
+            near.append((x, horizon - 10 - 30 * abs(math.sin(x * 0.006 + 0.2))))
+        near += [(W, horizon)]
+        d.polygon(near, fill=(10, 12, 18, 255))
+        _SUN_MTN[key] = ov
+    return _SUN_MTN[key]
+
+
+def _r_sun(W, H, now, t):
+    td = now.hour + now.minute / 60 + now.second / 3600
+    horizon = H - 104
+    key = (now.hour, now.minute)
+    if _SUN_SCENE["key"] != key:                 # แคชฉากต่อ 1 นาที (ฟ้า+ตะวัน+ภูเขา)
+        top, mid, bot = _sky_cols(td)
+        h2 = horizon // 2
+        col = np.vstack([np.linspace(top, mid, h2, endpoint=False),
+                         np.linspace(mid, bot, horizon - h2)]).astype(np.float32)
+        sky = np.repeat(col[:, None, :], W, axis=1).astype(np.uint8)
+        img = Image.new("RGB", (W, H), (9, 11, 15))
+        img.paste(Image.fromarray(sky, "RGB"), (0, 0))
+        d = ImageDraw.Draw(img, "RGBA")
+        if _SUNRISE <= td <= _SUNSET:            # ดวงอาทิตย์โคจรตามเวลาจริง
+            f = (td - _SUNRISE) / (_SUNSET - _SUNRISE)
+            elev = math.sin(f * math.pi)
+            sx = 90 + f * (W - 180)
+            sy = horizon - 26 - elev * (horizon - 150)
+            warm = 1 - elev                      # ใกล้ขอบฟ้า = ส้มอุ่น
+            scol = tuple(int(a + (b - a) * warm) for a, b in zip((255, 216, 130), (255, 128, 56)))
+            strokes = Image.new("RGB", (W, H), (0, 0, 0))
+            dg = ImageDraw.Draw(strokes)
+            dg.ellipse([sx - 36, sy - 36, sx + 36, sy + 36], fill=scol)
+            img = _glow_add(img, strokes, 44, 1.0)
+            img = _glow_add(img, strokes, 15, 0.9)
+            d = ImageDraw.Draw(img, "RGBA")
+            d.ellipse([sx - 30, sy - 30, sx + 30, sy + 30], fill=(255, 246, 216))
+        else:                                    # พระจันทร์เสี้ยว
+            nf = ((td - _SUNSET) % 24) / (24 - (_SUNSET - _SUNRISE))
+            elev = math.sin(nf * math.pi)
+            sx = 90 + nf * (W - 180)
+            sy = horizon - 26 - elev * (horizon - 160)
+            strokes = Image.new("RGB", (W, H), (0, 0, 0))
+            ImageDraw.Draw(strokes).ellipse([sx - 26, sy - 26, sx + 26, sy + 26],
+                                            fill=(120, 130, 160))
+            img = _glow_add(img, strokes, 30, 0.8)
+            d = ImageDraw.Draw(img, "RGBA")
+            d.ellipse([sx - 24, sy - 24, sx + 24, sy + 24], fill=(232, 236, 246))
+            bgc = tuple(int(v) for v in col[min(horizon - 1, max(0, int(sy - 10)))])
+            d.ellipse([sx - 24 + 15, sy - 24 - 7, sx + 24 + 15, sy + 24 - 7], fill=bgc)
+        img.paste(_sun_mountains(W, H, horizon), (0, 0), _sun_mountains(W, H, horizon))
+        d = ImageDraw.Draw(img)
+        d.rectangle([0, horizon, W, H], fill=(9, 11, 15))
+        _SUN_SCENE["key"], _SUN_SCENE["img"] = key, img
+    frame = _SUN_SCENE["img"].copy()
+    d = ImageDraw.Draw(frame, "RGBA")
+    # ดาวระยิบ (เฉพาะกลางคืน) — วาดต่อเฟรมให้กะพริบ
+    if td < 5.0 or td >= 20.0:
+        nf = 1.0
+    elif 5.0 <= td < 6.5:
+        nf = 1.0 - (td - 5.0) / 1.5
+    elif 18.5 <= td < 20.0:
+        nf = (td - 18.5) / 1.5
+    else:
+        nf = 0.0
+    if nf > 0.03:
+        for i in range(110):
+            sx = (i * 397 + 53) % W
+            sy = (i * 211 + 31) % (horizon - 70)
+            tw = 0.5 + 0.5 * math.sin(t * 2.4 + i * 1.7)
+            aa = int(210 * nf * tw)
+            if aa > 12:
+                d.ellipse([sx - 1, sy - 1, sx + 1, sy + 1], fill=(255, 255, 255, aa))
+    # เวลา (ขอบเข้มบาง ๆ ให้อ่านออกทุกสีฟ้า)
+    d.text((W / 2, H / 2 - 26), now.strftime("%H:%M"), font=_f("thin", 216),
+           fill=(250, 250, 252), anchor="mm", stroke_width=4, stroke_fill=(14, 17, 26))
+    d.text((W / 2 + 350, H / 2 + 46), now.strftime(":%S"), font=_f("thin", 72),
+           fill=(235, 237, 242), anchor="mm", stroke_width=3, stroke_fill=(14, 17, 26))
+    d.text((W / 2, H - 46), now.strftime("%A  %d %B %Y").upper(), font=_f("thin", 32),
+           fill=(215, 218, 226), anchor="mm", stroke_width=2, stroke_fill=(10, 12, 18))
+    return frame
 
 
 # ── สไตล์: lumo (analog เข็มเรืองแสง — Casio กลางคืน / ana-digi) ───────────────
@@ -946,7 +1151,7 @@ def _r_cyberpunk(W, H, now, t):
 _RENDER = {
     "nixie": _r_nixie, "flip": _r_flip, "vfd": _r_vfd, "seg7": _r_seg7,
     "lcd": _r_lcd, "analog": _r_analog, "lumo": _r_lumo, "mech": _r_mech,
-    "neon": _r_neon, "word": _r_word, "world": _r_world,
+    "sun": _r_sun, "neon": _r_neon, "word": _r_word, "world": _r_world,
     "cyberpunk": _r_cyberpunk, "minimal": _r_minimal,
 }
 
