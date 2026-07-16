@@ -497,9 +497,11 @@ class VideoPlayer:
             guard += 1
         if self.last is None and not self._read_next():
             return None
-        return self._fit(self.last, W, H, mode)
+        return self._fit(self.last, W, H, mode, elapsed)
 
-    def _fit(self, bgr, W, H, mode):
+    PAN_PERIOD = 40.0        # วินาที/รอบแพน (ไป-กลับ) — ยิ่งมากยิ่งช้า
+
+    def _fit(self, bgr, W, H, mode, elapsed=0.0):
         cv2 = self.cv2
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         vh, vw = rgb.shape[:2]
@@ -510,11 +512,14 @@ class VideoPlayer:
             canvas = np.zeros((H, W, 3), dtype=np.uint8)
             x, y = (W - nw) // 2, (H - nh) // 2
             canvas[y:y + nh, x:x + nw] = resized
-        else:                                          # band — cover + crop กลาง (เต็มจอ)
+        else:                                          # band — cover + แพนช้า ๆ ในส่วนที่ล้นจอ
             s = max(W / vw, H / vh)
             nw, nh = max(W, int(round(vw * s))), max(H, int(round(vh * s)))
             resized = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA)
-            x, y = (nw - W) // 2, (nh - H) // 2
+            # ease แบบ sine: เริ่มกลางเฟรม → เลื่อนขึ้น-ลง (หรือซ้าย-ขวา) นุ่ม ๆ ครบรอบใน PAN_PERIOD
+            ph = 0.5 + 0.5 * math.sin(2 * math.pi * elapsed / self.PAN_PERIOD)
+            x = int((nw - W) * ph) if nw > W else 0
+            y = int((nh - H) * ph) if nh > H else 0
             canvas = resized[y:y + H, x:x + W]
         return Image.fromarray(canvas)
 
