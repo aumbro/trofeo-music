@@ -46,6 +46,7 @@ def _f(kind, size):
     if key not in _font_cache:
         cands = {
             "sans":  ["arialbd.ttf", "segoeuib.ttf", "tahomabd.ttf"],
+            "nixie": ["bahnschrift.ttf", "arialbd.ttf", "segoeuib.ttf"],
             "thin":  ["segoeuil.ttf", "ARIALN.TTF", "arial.ttf"],
             "serif": ["georgiab.ttf", "timesbd.ttf", "georgia.ttf", "times.ttf"],
             "serifi": ["georgia.ttf", "times.ttf"],
@@ -145,7 +146,7 @@ def _digital_layout(W, H, dw, dh, th, gapd, colw):
 
 
 def _draw_digital(base, W, H, hh, mm, ss, on, off, glow_col, blur,
-                  dw=196, dh=300, th=36, gapd=16, colw=46, colon=True):
+                  dw=178, dh=298, th=33, gapd=30, colw=52, colon=True):
     """วาดนาฬิกาดิจิทัล 7-seg ทับ base (in-place-ish) — คืน base ใหม่ที่บวก glow แล้ว"""
     layout, y = _digital_layout(W, H, dw, dh, th, gapd, colw)
     digits = f"{hh:02d}{mm:02d}{ss:02d}"
@@ -257,80 +258,157 @@ def _r_lcd(W, H, now, t):
 
 
 # ── สไตล์: nixie (หลอดเรืองส้ม — วินเทจสุด) ───────────────────────────────────
+_NIXIE_MESH: dict = {}
+
+
 def _r_nixie(W, H, now, t):
-    dw, dh, gap = 150, 300, 26
+    dw, dh, gap = 150, 300, 34
     tokens = ["d", "d", "c", "d", "d", "c", "d", "d"]
-    colw = 46
+    colw = 44
     total = 6 * dw + 2 * colw + 7 * gap
     x0 = (W - total) / 2
     y = (H - dh) / 2
+    fnt = _f("nixie", 250)
 
-    def build(W, H):
-        img = Image.new("RGB", (W, H), (10, 8, 7))
-        v = _vignette(W, H, 70, 255)
-        img = ImageChops.multiply(img, Image.merge("RGB", (v, v, v)))
-        d = ImageDraw.Draw(img, "RGBA")
-        x = x0
-        for tk in tokens:
-            if tk == "d":
-                # หลอดแก้ว: แคปซูลตั้ง + ฐานโลหะ + เงาแก้ว
-                gx0, gy0, gx1, gy1 = x - 10, y - 26, x + dw + 10, y + dh + 20
-                d.rounded_rectangle([gx0, gy0, gx1, gy1], radius=60,
-                                    fill=(16, 18, 22, 180), outline=(40, 44, 52, 200), width=3)
-                d.ellipse([gx0 + 6, gy0 + 6, gx1 - 6, gy0 + 70], fill=(60, 70, 82, 60))
-                d.rounded_rectangle([gx0 + 8, gy1 - 34, gx1 - 8, gy1 + 8], radius=10,
-                                    fill=(30, 26, 22, 255), outline=(60, 52, 44, 255), width=2)
-                x += dw + gap
-            else:
-                x += colw + gap
-        return img
-    base = _bg("nixie", W, H, build)
-    strokes = Image.new("RGB", (W, H), (0, 0, 0))
-    dg = ImageDraw.Draw(strokes)
-    db = ImageDraw.Draw(base, "RGBA")
-    digits = f"{now.hour:02d}{now.minute:02d}{now.second:02d}"
-    fnt = _f("sans", 250)
-    ON = (255, 138, 40)
-    di = 0
+    # ตำแหน่งหลอด (สำหรับ mesh + glass)
+    tubes = []
     x = x0
-    flick = 1.0
     for tk in tokens:
         if tk == "d":
-            ch = digits[di]; di += 1
-            cx, cy = x + dw / 2, y + dh / 2
-            # ghost เลขข้างเคียงจาง ๆ (เสน่ห์ nixie)
-            db.text((cx, cy - 6), str((int(ch) + 1) % 10), font=_f("sans", 210),
-                    fill=(120, 60, 24, 40), anchor="mm")
-            db.text((cx, cy), ch, font=fnt, fill=ON + (255,), anchor="mm")
-            dg.text((cx, cy), ch, font=fnt, fill=(220, 110, 30), anchor="mm")
+            tubes.append((x - 12, y - 30, x + dw + 12, y + dh + 24, x + dw / 2, y + dh / 2))
+            x += dw + gap
+        else:
+            x += colw + gap
+
+    def build(W, H):
+        img = Image.new("RGB", (W, H), (12, 9, 8))
+        v = _vignette(W, H, 60, 255)
+        img = ImageChops.multiply(img, Image.merge("RGB", (v, v, v)))
+        d = ImageDraw.Draw(img, "RGBA")
+        for (gx0, gy0, gx1, gy1, cx, cy) in tubes:
+            # แก้วหลอด + โดมบน + เงาสะท้อนแนวตั้ง + ฐานเบกาไลต์ + ขาพิน
+            d.rounded_rectangle([gx0, gy0, gx1, gy1], radius=66,
+                                fill=(18, 20, 26, 170), outline=(44, 48, 58, 210), width=3)
+            d.ellipse([gx0 + 6, gy0 + 4, gx1 - 6, gy0 + 74], fill=(70, 82, 96, 55))
+            d.rectangle([cx - 26, gy0 + 30, cx - 14, gy1 - 40], fill=(120, 140, 160, 26))
+            d.rounded_rectangle([gx0 + 6, gy1 - 40, gx1 - 6, gy1 + 6], radius=12,
+                                fill=(34, 28, 22, 255), outline=(64, 54, 44, 255), width=2)
+            for px in range(int(gx0) + 22, int(gx1) - 10, 26):
+                d.line([(px, gy1 + 2), (px, gy1 + 18)], fill=(90, 78, 60, 255), width=3)
+        return img
+
+    # mesh ลวด (ตะแกรง anode) — overlay RGBA แคชไว้
+    mkey = (W, H)
+    if mkey not in _NIXIE_MESH:
+        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        dm = ImageDraw.Draw(ov)
+        for (gx0, gy0, gx1, gy1, cx, cy) in tubes:
+            for yy in range(int(gy0) + 40, int(gy1) - 46, 15):
+                dm.line([(gx0 + 16, yy), (gx1 - 16, yy)], fill=(18, 11, 7, 105), width=1)
+        _NIXIE_MESH[mkey] = ov
+
+    base = _bg("nixie", W, H, build).convert("RGB")
+    digits = f"{now.hour:02d}{now.minute:02d}{now.second:02d}"
+
+    # ── ghost เลขที่ไม่ติด (จาง ๆ เห็นเป็นลวดในหลอด) ──
+    dgh = ImageDraw.Draw(base, "RGBA")
+    di = 0
+    for (gx0, gy0, gx1, gy1, cx, cy) in tubes:
+        ch = digits[di]; di += 1
+        for gd in ("8", str((int(ch) + 5) % 10)):
+            if gd != ch:
+                dgh.text((cx, cy), gd, font=fnt, fill=(90, 44, 20, 34), anchor="mm")
+
+    # ── glow หลายชั้น (แดง-ส้มอุ่น) ──
+    strokes = Image.new("RGB", (W, H), (0, 0, 0))
+    dg = ImageDraw.Draw(strokes)
+    di = 0
+    for (gx0, gy0, gx1, gy1, cx, cy) in tubes:
+        ch = digits[di]; di += 1
+        dg.text((cx, cy), ch, font=fnt, fill=(255, 96, 20), anchor="mm")
+    x = x0
+    for tk in tokens:                                # จุด colon ลง strokes
+        if tk == "d":
             x += dw + gap
         else:
             cx = x + colw / 2
             for cy in (y + dh * 0.34, y + dh * 0.66):
-                db.ellipse([cx - 9, cy - 9, cx + 9, cy + 9], fill=(255, 150, 55, 255))
-                dg.ellipse([cx - 9, cy - 9, cx + 9, cy + 9], fill=(230, 120, 40))
+                dg.ellipse([cx - 8, cy - 8, cx + 8, cy + 8], fill=(255, 110, 30))
             x += colw + gap
-    base = _glow_add(base, strokes, 22, 1.1)
-    # วาดเลขคมทับ glow
-    db2 = ImageDraw.Draw(base)
-    di = 0; x = x0
+    base = _glow_add(base, strokes, 30, 0.85)        # halo กว้าง แดง
+    base = _glow_add(base, strokes, 13, 1.0)         # ชั้นกลาง
+
+    # ── core ร้อน คมทับ glow ──
+    dc = ImageDraw.Draw(base)
+    di = 0
+    for (gx0, gy0, gx1, gy1, cx, cy) in tubes:
+        ch = digits[di]; di += 1
+        dc.text((cx, cy), ch, font=fnt, fill=(255, 120, 34), anchor="mm")
+        dc.text((cx, cy), ch, font=_f("nixie", 232), fill=(255, 186, 120), anchor="mm")
+    x = x0
     for tk in tokens:
         if tk == "d":
-            ch = digits[di]; di += 1
-            db2.text((x + dw / 2, y + dh / 2), ch, font=fnt, fill=ON, anchor="mm")
             x += dw + gap
         else:
+            cx = x + colw / 2
+            for cy in (y + dh * 0.34, y + dh * 0.66):
+                dc.ellipse([cx - 8, cy - 8, cx + 8, cy + 8], fill=(255, 150, 70))
             x += colw + gap
+
+    # ── ตะแกรงลวดหน้าหลอด ──
+    base = Image.alpha_composite(base.convert("RGBA"), _NIXIE_MESH[mkey]).convert("RGB")
     d = ImageDraw.Draw(base)
-    _text_c(d, W / 2, H - 34, now.strftime("%A  %d %B %Y").upper(),
+    _text_c(d, W / 2, H - 30, now.strftime("%A  %d %B %Y").upper(),
             _f("mono", 24), (150, 84, 36))
     return base
 
 
-# ── สไตล์: flip (ป้ายพลิก split-flap) ─────────────────────────────────────────
+# ── สไตล์: flip (ป้ายพลิก split-flap + อนิเมชันพลิกจริง) ───────────────────────
+_FLIP: dict = {}          # pos → {"d":เลขปัจจุบัน, "old":เลขก่อน, "ct":เวลาเปลี่ยน}
+_FLIP_DUR = 0.30
+_FLIP_FCACHE: dict = {}   # (digit,w,h) → ภาพหน้าการ์ด
+
+
+def _card_face(digit, w, h, fnt):
+    key = (digit, w, h)
+    if key not in _FLIP_FCACHE:
+        c = Image.new("RGB", (w, h), (22, 22, 26))
+        d = ImageDraw.Draw(c)
+        d.rounded_rectangle([0, 0, w - 1, h - 1], radius=20, fill=(28, 28, 33))
+        d.rounded_rectangle([0, 0, w - 1, h // 2], radius=20, fill=(40, 40, 47))
+        d.rectangle([0, h // 2 - 20, w - 1, h // 2], fill=(40, 40, 47))
+        # ไล่เงาบน-ล่างนิด ๆ
+        d.rectangle([0, h // 2, w - 1, h // 2 + 3], fill=(16, 16, 19))
+        d.text((w / 2, h / 2), digit, font=fnt, fill=(240, 240, 246), anchor="mm")
+        _FLIP_FCACHE[key] = c
+    return _FLIP_FCACHE[key]
+
+
+def _draw_flip(base, x, y, w, h, old_d, new_d, p, fnt):
+    xi, yi, mid = int(x), int(y), h // 2
+    face_new = _card_face(new_d, w, h, fnt)
+    if p >= 1.0 or old_d == new_d:
+        base.paste(face_new, (xi, yi))
+    else:
+        face_old = _card_face(old_d, w, h, fnt)
+        base.paste(face_new.crop((0, 0, w, mid)), (xi, yi))            # บน = เลขใหม่ (รอเผย)
+        base.paste(face_old.crop((0, mid, w, h)), (xi, yi + mid))      # ล่าง = เลขเก่า
+        if p < 0.5:                                                    # แผ่นบนเก่าพลิกลง (สูง→0)
+            fh = max(1, int(mid * math.cos(p * math.pi)))
+            flap = face_old.crop((0, 0, w, mid)).resize((w, fh))
+            base.paste(flap, (xi, yi + mid - fh))
+        else:                                                          # แผ่นล่างใหม่พลิกขึ้น (0→สูง)
+            fh = max(1, int(mid * math.cos((1.0 - p) * math.pi)))
+            flap = face_new.crop((0, mid, w, h)).resize((w, fh))
+            base.paste(flap, (xi, yi + mid))
+    d = ImageDraw.Draw(base)
+    d.rectangle([x, y + mid - 2, x + w, y + mid + 2], fill=(12, 12, 14))
+    d.ellipse([x - 6, y + mid - 7, x + 6, y + mid + 7], fill=(52, 52, 58))
+    d.ellipse([x + w - 6, y + mid - 7, x + w + 6, y + mid + 7], fill=(52, 52, 58))
+
+
 def _r_flip(W, H, now, t):
-    # 3 กลุ่มการ์ดคู่: HH MM SS (1 การ์ด/หลัก)
-    pairs = [f"{now.hour:02d}", f"{now.minute:02d}", f"{now.second:02d}"]
+    digits = f"{now.hour:02d}{now.minute:02d}{now.second:02d}"
     ch = 320
     gap_in, gap_out = 10, 54
     dcw = 176
@@ -340,29 +418,23 @@ def _r_flip(W, H, now, t):
     y = (H - ch) / 2
     fnt = _f("sans", 220)
 
-    def card(d, x, digit):
-        r = 18
-        d.rounded_rectangle([x, y, x + dcw, y + ch], radius=r, fill=(24, 24, 28))
-        # ครึ่งบนสว่างกว่าเล็กน้อย
-        d.rounded_rectangle([x, y, x + dcw, y + ch / 2], radius=r, fill=(34, 34, 40))
-        d.rectangle([x, y + ch / 2 - r, x + dcw, y + ch / 2], fill=(34, 34, 40))
-        # เลข
-        d.text((x + dcw / 2, y + ch / 2), digit, font=fnt, fill=(238, 238, 244), anchor="mm")
-        # เส้นบานพับกลาง + สลัก
-        d.rectangle([x, y + ch / 2 - 2, x + dcw, y + ch / 2 + 2], fill=(12, 12, 14))
-        d.ellipse([x - 6, y + ch / 2 - 7, x + 6, y + ch / 2 + 7], fill=(50, 50, 56))
-        d.ellipse([x + dcw - 6, y + ch / 2 - 7, x + dcw + 6, y + ch / 2 + 7], fill=(50, 50, 56))
-
     def build(W, H):
-        img = Image.new("RGB", (W, H), (14, 14, 16))
-        return img
+        return Image.new("RGB", (W, H), (14, 14, 16))
     base = _bg("flip", W, H, build)
-    d = ImageDraw.Draw(base)
-    for pi, pr in enumerate(pairs):
-        x = x0 + pi * (group_w + gap_out)
-        card(d, x, pr[0])
-        card(d, x + dcw + gap_in, pr[1])
-    _text_c(d, W / 2, H - 30, now.strftime("%A  %d %B").upper(),
+
+    for i, cur in enumerate(digits):
+        st = _FLIP.get(i)
+        if st is None:
+            _FLIP[i] = {"d": cur, "old": cur, "ct": t - 1.0}
+        elif st["d"] != cur:
+            st["old"] = st["d"]; st["d"] = cur; st["ct"] = t
+        st = _FLIP[i]
+        p = 1.0 if _FLIP_DUR <= 0 else min(1.0, (t - st["ct"]) / _FLIP_DUR)
+        g, j = divmod(i, 2)
+        x = x0 + g * (group_w + gap_out) + j * (dcw + gap_in)
+        _draw_flip(base, x, y, dcw, ch, st["old"], st["d"], p, fnt)
+
+    _text_c(ImageDraw.Draw(base), W / 2, H - 30, now.strftime("%A  %d %B").upper(),
             _f("sans", 26), (150, 150, 160))
     return base
 
