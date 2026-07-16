@@ -18,15 +18,16 @@ import math
 from datetime import datetime, timezone, timedelta
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
 
-STYLES = ["nixie", "flip", "vfd", "seg7", "lcd", "analog", "lumo",
+STYLES = ["nixie", "flip", "vfd", "seg7", "lcd", "analog", "lumo", "mech",
           "neon", "word", "world", "cyberpunk", "minimal"]
 STYLE_LABELS = {
     "nixie": "Nixie (หลอดเรืองส้ม)", "flip": "Flip (ป้ายพลิก)",
     "vfd": "VFD (จอเขียวเรือง)", "seg7": "7-Segment (LED แดง)",
     "lcd": "LCD (Casio เขียว)", "analog": "เข็ม (เลขโรมัน วินเทจ)",
-    "lumo": "เข็มเรืองแสง (Casio กลางคืน)", "neon": "Neon (นีออน)",
-    "word": "Word (นาฬิกาคำ)", "world": "World (นาฬิกาโลก)",
-    "cyberpunk": "Cyberpunk (นีออน HUD)", "minimal": "Minimal (เรียบ)",
+    "lumo": "เข็มเรืองแสง (Casio กลางคืน)", "mech": "กลไก (เฟืองหมุน)",
+    "neon": "Neon (นีออน)", "word": "Word (นาฬิกาคำ)",
+    "world": "World (นาฬิกาโลก)", "cyberpunk": "Cyberpunk (นีออน HUD)",
+    "minimal": "Minimal (เรียบ)",
 }
 
 # ── fonts ────────────────────────────────────────────────────────────────────
@@ -642,6 +643,156 @@ def _r_minimal(W, H, now, t):
     return base
 
 
+# ── สไตล์: mech (นาฬิกากลไก — เฟืองทองเหลืองหมุนจริง + balance wheel) ──────────
+_GEARS: dict = {}          # (teeth, r_out) → sprite RGBA (วาดครั้งเดียว หมุนต่อเฟรม)
+
+_BRASS = (196, 158, 84)
+_BRASS_D = (140, 108, 52)
+_BRASS_L = (232, 198, 120)
+_STEEL = (150, 155, 165)
+
+
+def _gear_sprite(teeth, r_out, hole=0.32, spokes=5, color=_BRASS):
+    """วาดเฟือง 1 ตัวเป็น RGBA sprite (ฟันสี่เหลี่ยมมน + ซี่ล้อ + รูแกน)"""
+    key = (teeth, r_out, hole, spokes, color)
+    if key in _GEARS:
+        return _GEARS[key]
+    S = r_out * 2 + 8
+    img = Image.new("RGBA", (int(S), int(S)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    c = S / 2
+    r_root = r_out * 0.86                     # โคนฟัน
+    # ฟัน: polygon รอบวง
+    tw = math.pi * 2 / teeth
+    for i in range(teeth):
+        a0 = i * tw
+        pts = []
+        for (rr, da) in ((r_root, -0.5 * tw * 0.9), (r_out, -0.22 * tw),
+                         (r_out, 0.22 * tw), (r_root, 0.5 * tw * 0.9)):
+            pts.append((c + rr * math.cos(a0 + da), c + rr * math.sin(a0 + da)))
+        d.polygon(pts, fill=color)
+    d.ellipse([c - r_root, c - r_root, c + r_root, c + r_root], fill=color)
+    # แผ่นในเข้มกว่า + ซี่ล้อ (เจาะช่อง)
+    r_in = r_root * 0.82
+    d.ellipse([c - r_in, c - r_in, c + r_in, c + r_in], fill=_BRASS_D + (255,))
+    r_h = r_out * hole
+    if spokes > 0:
+        # ช่องว่างระหว่างซี่ = วาดวงในสีโปร่งเป็น pie แล้วเว้นซี่
+        for i in range(spokes):
+            a0 = i * 2 * math.pi / spokes
+            a1 = a0 + 2 * math.pi / spokes * 0.62
+            d.pieslice([c - r_in * 0.92, c - r_in * 0.92, c + r_in * 0.92, c + r_in * 0.92],
+                       math.degrees(a0), math.degrees(a1), fill=(0, 0, 0, 0))
+    # ดุมกลาง + รูแกน
+    d.ellipse([c - r_h - 10, c - r_h - 10, c + r_h + 10, c + r_h + 10], fill=color)
+    d.ellipse([c - r_h, c - r_h, c + r_h, c + r_h], fill=(24, 20, 16, 255))
+    # ไฮไลต์ขอบบน (แสงตกทองเหลือง)
+    d.arc([c - r_root, c - r_root, c + r_root, c + r_root], 200, 320,
+          fill=_BRASS_L + (200,), width=3)
+    _GEARS[key] = img
+    return img
+
+
+def _paste_gear(base, cx, cy, sprite, angle_deg):
+    g = sprite.rotate(-angle_deg, resample=Image.BICUBIC)
+    base.paste(g, (int(cx - g.width / 2), int(cy - g.height / 2)), g)
+
+
+def _r_mech(W, H, now, t):
+    cx, cy = W / 2, H / 2
+    R = H / 2 - 26
+
+    def build(W, H):
+        # พื้นโลหะเข้ม + แผ่น movement + สกรู
+        img = Image.new("RGB", (W, H), (26, 22, 18))
+        v = _vignette(W, H, 80, 255)
+        img = ImageChops.multiply(img, Image.merge("RGB", (v, v, v)))
+        d = ImageDraw.Draw(img, "RGBA")
+        # แผ่น bridge บน-ล่าง (สไตล์ movement)
+        d.rounded_rectangle([40, 34, W - 40, 100], radius=30, fill=(38, 32, 26, 255),
+                            outline=(70, 58, 42, 255), width=2)
+        d.rounded_rectangle([40, H - 100, W - 40, H - 34], radius=30, fill=(38, 32, 26, 255),
+                            outline=(70, 58, 42, 255), width=2)
+        for sx in (70, W - 70, W / 2 - 400, W / 2 + 400):
+            for sy in (66, H - 66):
+                d.ellipse([sx - 9, sy - 9, sx + 9, sy + 9], fill=(110, 116, 126, 255))
+                d.line([(sx - 6, sy - 6), (sx + 6, sy + 6)], fill=(60, 62, 70, 255), width=3)
+        return img
+    base = _bg("mech", W, H, build).convert("RGBA")
+
+    sec = now.second + now.microsecond / 1e6
+    mn = now.minute + sec / 60
+    hr = (now.hour % 12) + mn / 60
+
+    # ── ขบวนเฟือง (gear train) ซ้าย-ขวาของหน้าปัด ──
+    # มุมหมุนผูกกับเวลาจริง: เฟืองวินาที 1 รอบ/นาที, ทดช้าลงเป็นชั้น ๆ
+    a_fast = sec * 6.0                          # 1 รอบ/นาที
+    a_mid = -a_fast / 3.2                       # ทด + สวนทาง
+    a_slow = a_fast / 9.5
+    a_esc = math.degrees(math.sin(t * math.pi * 2 * 2.5) * 0.16)  # escapement กระตุก
+
+    g_big = _gear_sprite(24, 150)
+    g_mid = _gear_sprite(16, 100)
+    g_sml = _gear_sprite(10, 62, spokes=0)
+    g_esc = _gear_sprite(30, 118, hole=0.18, spokes=4, color=_STEEL)
+
+    LX = W * 0.155                              # ศูนย์กลางฝั่งซ้าย
+    _paste_gear(base, LX - 130, cy - 60, g_mid, a_mid + 12)
+    _paste_gear(base, LX + 90, cy + 88, g_sml, -a_fast * 1.6)
+    _paste_gear(base, LX, cy, g_big, a_slow)
+    # balance wheel (ล้อจักร) — แกว่งไปมา
+    bx, by = LX + 210, cy - 108
+    d = ImageDraw.Draw(base)
+    swing = math.sin(t * math.pi * 2 * 2.5) * 40    # 2.5Hz
+    d.ellipse([bx - 74, by - 74, bx + 74, by + 74], outline=_BRASS_L, width=8)
+    for i in range(3):
+        a = math.radians(swing + i * 120)
+        d.line([(bx, by), (bx + 66 * math.cos(a), by + 66 * math.sin(a))],
+               fill=_BRASS_L, width=6)
+    d.ellipse([bx - 10, by - 10, bx + 10, by + 10], fill=(180, 40, 60))  # ทับทิม
+
+    RX = W * 0.845
+    _paste_gear(base, RX + 120, cy - 70, g_mid, -a_mid)
+    _paste_gear(base, RX - 100, cy + 90, g_sml, a_fast * 1.6 + 18)
+    _paste_gear(base, RX, cy, g_esc, a_fast + a_esc)
+    # ทับทิม jewel bearing ประดับ
+    for (jx, jy) in ((RX, cy), (LX, cy)):
+        d.ellipse([jx - 7, jy - 7, jx + 7, jy + 7], fill=(190, 44, 66))
+
+    # ── หน้าปัด skeleton กลาง ──
+    d.ellipse([cx - R, cy - R, cx + R, cy + R], outline=_BRASS, width=6)
+    d.ellipse([cx - R + 14, cy - R + 14, cx + R - 14, cy + R - 14],
+              outline=_BRASS_D, width=2)
+    for i in range(12):
+        a = math.radians(i * 30 - 90)
+        r1, r2 = R - 38, R - 16
+        w = 7 if i % 3 == 0 else 4
+        d.line([(cx + r1 * math.cos(a), cy + r1 * math.sin(a)),
+                (cx + r2 * math.cos(a), cy + r2 * math.sin(a))], fill=_BRASS_L, width=w)
+    # เฟืองเล็กหมุนใต้เข็ม (โชว์กลไกทะลุ)
+    _paste_gear(base, cx, cy, _gear_sprite(12, 74, hole=0.16, spokes=4), a_fast * 2.0)
+
+    def hand(ang, length, width, color, back=20):
+        a = math.radians(ang - 90)
+        x2, y2 = cx + length * math.cos(a), cy + length * math.sin(a)
+        xb, yb = cx - back * math.cos(a), cy - back * math.sin(a)
+        d.line([(xb, yb), (x2, y2)], fill=color, width=width)
+
+    # เข็ม breguet สีน้ำเงินเหล็ก + วงพระจันทร์ปลายเข็ม
+    BLUE = (58, 84, 160)
+    hand(hr * 30, R * 0.50, 12, BLUE)
+    hand(mn * 6, R * 0.74, 8, BLUE)
+    for (ang, rr) in ((hr * 30, R * 0.36), (mn * 6, R * 0.56)):
+        a = math.radians(ang - 90)
+        px, py = cx + rr * math.cos(a), cy + rr * math.sin(a)
+        d.ellipse([px - 9, py - 9, px + 9, py + 9], outline=BLUE, width=5)
+    hand(sec * 6, R * 0.82, 3, (200, 60, 70))
+    d.ellipse([cx - 12, cy - 12, cx + 12, cy + 12], fill=_BRASS)
+    d.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=(190, 44, 66))
+
+    return base.convert("RGB")
+
+
 # ── สไตล์: lumo (analog เข็มเรืองแสง — Casio กลางคืน / ana-digi) ───────────────
 def _r_lumo(W, H, now, t):
     cx, cy = W / 2, H / 2
@@ -794,9 +945,9 @@ def _r_cyberpunk(W, H, now, t):
 
 _RENDER = {
     "nixie": _r_nixie, "flip": _r_flip, "vfd": _r_vfd, "seg7": _r_seg7,
-    "lcd": _r_lcd, "analog": _r_analog, "lumo": _r_lumo, "neon": _r_neon,
-    "word": _r_word, "world": _r_world, "cyberpunk": _r_cyberpunk,
-    "minimal": _r_minimal,
+    "lcd": _r_lcd, "analog": _r_analog, "lumo": _r_lumo, "mech": _r_mech,
+    "neon": _r_neon, "word": _r_word, "world": _r_world,
+    "cyberpunk": _r_cyberpunk, "minimal": _r_minimal,
 }
 
 
