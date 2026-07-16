@@ -7,7 +7,10 @@ pillow>=10.0.0
 # (ถ้าจะใช้ package แทน ให้ลง 'libusb-package' เวอร์ชันที่มี wheel เช่น 1.0.26.4/1.0.30.0
 #  — ระวังชนกับ bumble ที่ pin ==1.0.26.1)
 
-# ทางเลือก: เล่นวิดีโอ (mp4/mov/mkv/...) — GIF/ภาพนิ่งไม่ต้องใช้
+# ทางเลือก: โหมดวิดีโอของ vibe.py (เล่นไฟล์ลงจอแทน visualizer) — ต้องใช้ opencv
+opencv-python>=4.8.0
+
+# ทางเลือก: send.py เล่นวิดีโอ/GIF (mp4/mov/mkv/...) — GIF/ภาพนิ่งไม่ต้องใช้
 imageio>=2.31
 imageio-ffmpeg>=0.4.9
 av>=11.0.0

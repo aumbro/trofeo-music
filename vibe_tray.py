@@ -47,6 +47,10 @@ class Cfg:
         self.preview = None
         self.art = None
         self.always_lyrics = True  # ดึงเนื้อเพลงเสมอ → toggle โชว์ได้ทันที
+        # ── โหมดวิดีโอ (เล่นไฟล์ local ลงจอแทน visualizer) ──
+        self.video = False
+        self.video_path = None
+        self.video_fit = "band"    # band=คลิปกลางเต็มจอ · fit=ย่อทั้งคลิปมีแถบดำ
 
 
 cfg = Cfg()
@@ -97,6 +101,43 @@ def toggle_invert(icon, item):
     cfg.invert = not cfg.invert
 
 
+def pick_video(icon, item):
+    """เปิด dialog เลือกไฟล์วิดีโอ → เปิดโหมดวิดีโอเลย"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askopenfilename(
+            title="เลือกไฟล์วิดีโอ",
+            filetypes=[("วิดีโอ", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"),
+                       ("ทั้งหมด", "*.*")])
+        root.destroy()
+    except Exception as e:
+        vibe.log("tray: เปิด dialog ไม่ได้:", e)
+        return
+    if path:
+        cfg.video_path = path
+        cfg.video = True
+
+
+def toggle_video(icon, item):
+    """สลับเปิด/ปิดโหมดวิดีโอ — เปิดครั้งแรกที่ยังไม่มีไฟล์ → เปิด dialog"""
+    if cfg.video:
+        cfg.video = False
+    elif cfg.video_path:
+        cfg.video = True
+    else:
+        pick_video(icon, item)
+
+
+def make_set_fit(val):
+    def f(icon, item):
+        cfg.video_fit = val
+    return f
+
+
 def do_quit(icon, item):
     stop_evt.set()
     icon.stop()
@@ -123,6 +164,16 @@ MENU = Menu(
         viz_item("ribbon (คลื่นโปร่งแสง)", "ribbon"),
         viz_item("wave (particle)", "wave"),
         viz_item("random (สุ่มสลับ)", "random"),
+    )),
+    Menu.SEPARATOR,
+    MenuItem("โหมดวิดีโอ", Menu(
+        MenuItem("เปิด/ปิดวิดีโอ", toggle_video, checked=lambda i: cfg.video),
+        MenuItem("เลือกไฟล์วิดีโอ...", pick_video),
+        Menu.SEPARATOR,
+        MenuItem("คลิปกลาง (เต็มจอ)", make_set_fit("band"),
+                 checked=lambda i: cfg.video_fit == "band", radio=True),
+        MenuItem("ย่อทั้งคลิป (แถบดำข้าง)", make_set_fit("fit"),
+                 checked=lambda i: cfg.video_fit == "fit", radio=True),
     )),
     Menu.SEPARATOR,
     MenuItem("เนื้อเพลง (คาราโอเกะ)", toggle_lyrics, checked=lambda i: cfg.lyrics),

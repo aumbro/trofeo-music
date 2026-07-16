@@ -10,6 +10,7 @@ pyinstaller --onedir --noconsole --name vibe --noconfirm ^
   --collect-all winsdk ^
   --collect-all soundcard ^
   --collect-all pystray ^
+  --collect-all cv2 ^
   vibe_tray.py
 
 echo.

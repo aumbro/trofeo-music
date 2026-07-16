@@ -439,6 +439,83 @@ def audio_capture(spec: Spectrum, stop_evt: threading.Event, sr=48000, fft_n=204
             stop_evt.wait(2.0)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  โหมดวิดีโอ — เล่นไฟล์ local (mp4/mkv/...) ลงจอแทน visualizer
+#  จอกว้างแบน (1920x462 ~4.16:1) → 2 โหมดจัดเฟรม:
+#    band = cover + crop แถบกลาง (เต็มจอ ตัดหัว-ท้าย) · fit = contain (เห็นครบ แถบดำข้าง)
+# ─────────────────────────────────────────────────────────────────────────────
+class VideoPlayer:
+    """อ่านเฟรมจากไฟล์วิดีโอด้วย cv2 → PIL RGB ขนาดจอ, วนลูปอัตโนมัติ, pace ตามเวลาจริง"""
+
+    def __init__(self, path):
+        import cv2
+        self.cv2 = cv2
+        self.path = path
+        self.cap = cv2.VideoCapture(path)
+        if not self.cap.isOpened():
+            raise RuntimeError("เปิดไฟล์วิดีโอไม่ได้")
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.fps = fps if 1.0 < fps <= 120.0 else 30.0
+        self.count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        self.idx = -1            # index เฟรมที่ decode ล่าสุด
+        self.last = None         # เฟรมล่าสุด (BGR ndarray) — ใช้ซ้ำถ้ายังไม่ถึงเวลาเฟรมใหม่
+
+    def close(self):
+        try:
+            self.cap.release()
+        except Exception:
+            pass
+
+    def _read_next(self):
+        ok, frame = self.cap.read()
+        if not ok:                                     # จบไฟล์ → กลับต้นแล้วอ่านใหม่ (วน)
+            self.cap.set(self.cv2.CAP_PROP_POS_FRAMES, 0)
+            self.idx = -1
+            ok, frame = self.cap.read()
+            if not ok:
+                return False
+        self.idx += 1
+        self.last = frame
+        return True
+
+    def get_pil(self, elapsed, W, H, mode="band"):
+        # เฟรมเป้าหมายตามเวลาจริง (วนด้วย modulo) → ข้ามเฟรมเองถ้าลูปช้ากว่า realtime
+        if self.count > 0:
+            target = int(elapsed * self.fps) % self.count
+        else:
+            target = self.idx + 1
+        if target < self.idx:                          # เป้าย้อนกลับ = วนรอบ → รีเซ็ตต้นไฟล์
+            self.cap.set(self.cv2.CAP_PROP_POS_FRAMES, 0)
+            self.idx = -1
+        guard = 0
+        while self.idx < target and guard < 6:         # อ่านตามให้ทัน (จำกัดกันค้างถ้า decode ช้า)
+            if not self._read_next():
+                break
+            guard += 1
+        if self.last is None and not self._read_next():
+            return None
+        return self._fit(self.last, W, H, mode)
+
+    def _fit(self, bgr, W, H, mode):
+        cv2 = self.cv2
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        vh, vw = rgb.shape[:2]
+        if mode == "fit":                              # contain — ย่อทั้งคลิป มีแถบดำ
+            s = min(W / vw, H / vh)
+            nw, nh = max(1, int(round(vw * s))), max(1, int(round(vh * s)))
+            resized = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA)
+            canvas = np.zeros((H, W, 3), dtype=np.uint8)
+            x, y = (W - nw) // 2, (H - nh) // 2
+            canvas[y:y + nh, x:x + nw] = resized
+        else:                                          # band — cover + crop กลาง (เต็มจอ)
+            s = max(W / vw, H / vh)
+            nw, nh = max(W, int(round(vw * s))), max(H, int(round(vh * s)))
+            resized = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA)
+            x, y = (nw - W) // 2, (nh - H) // 2
+            canvas = resized[y:y + H, x:x + W]
+        return Image.fromarray(canvas)
+
+
 def demo_bands(n, t):
     """แถบสเปกตรัมจำลอง (โหมด demo/preview) — ให้ดูมีชีวิต"""
     x = np.linspace(0, 1, n)
@@ -1438,8 +1515,14 @@ def main():
     ap.add_argument("--fps", type=float, default=30.0, help="เฟรมต่อวินาที")
     ap.add_argument("--preview", metavar="PNG", help="เรนเดอร์ 1 เฟรมเป็น PNG แล้วออก")
     ap.add_argument("--art", metavar="IMG", help="ใช้รูปนี้เป็นปก (ไว้เทสต์ preview/demo)")
+    ap.add_argument("--video", metavar="FILE",
+                    help="เล่นไฟล์วิดีโอ (mp4/mkv/...) ลงจอแทน visualizer")
+    ap.add_argument("--video-fit", choices=["band", "fit"], default="band",
+                    help="band=คลิปกลางเต็มจอ (ตัดหัว-ท้าย) · fit=ย่อทั้งคลิป (แถบดำข้าง)")
     ap.add_argument("--pid", type=lambda s: int(s, 0), default=0x5408)
     args = ap.parse_args()
+    args.video_path = args.video          # run() ใช้ video_path; --video เปิดโหมดเลย
+    args.video = bool(args.video)
     run(args)
 
 
@@ -1561,6 +1644,32 @@ def run(args, stop_evt=None):
     rnd_next = 10.0
     if args.viz == "random":
         log(f"โหมด random — สุ่มสลับ visualizer (เริ่ม {rnd_viz})")
+
+    # ── โหมดวิดีโอ: เปิด/ปิด/เปลี่ยนไฟล์ได้สดจาก tray (อ่าน args ทุกเฟรม) ──
+    vp = {"player": None, "path": None, "t0": 0.0}
+
+    def ensure_video():
+        want = getattr(args, "video", False)
+        path = getattr(args, "video_path", None)
+        if not want or not path:                         # ปิดโหมด → ปล่อย player
+            if vp["player"] is not None:
+                vp["player"].close()
+                vp["player"], vp["path"] = None, None
+            return None
+        if vp["player"] is None or vp["path"] != path:   # เปิด/เปลี่ยนไฟล์
+            if vp["player"] is not None:
+                vp["player"].close()
+            try:
+                vp["player"] = VideoPlayer(path)
+                vp["path"], vp["t0"] = path, time.time()
+                log("โหมดวิดีโอ:", path, f"({vp['player'].fps:.0f}fps)")
+            except Exception as e:
+                log("เปิดวิดีโอไม่ได้:", e)
+                vp["player"], vp["path"] = None, None
+                args.video = False                       # กันวนพยายามเปิดไฟล์เสีย
+                return None
+        return vp["player"]
+
     gc.disable()                          # กัน GC pause กลางลูป (กระตุก) — เก็บเองเป็นระยะ
     gc_next = 20.0
     log(f"เริ่มแสดงผล {args.fps:.0f}fps — Ctrl+C ออก")
@@ -1596,7 +1705,18 @@ def run(args, stop_evt=None):
                     snap["_viz"], snap["_invert"] = "dots", True
                 else:
                     snap["_viz"] = rnd_viz
-            canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
+            player = ensure_video()
+            if player is not None:                          # โหมดวิดีโอ: เฟรมวิดีโอแทน visualizer
+                cw, ch = (PANEL_H, PANEL_W) if args.portrait else (PANEL_W, PANEL_H)
+                try:
+                    canvas = player.get_pil(loop_t - vp["t0"], cw, ch,
+                                            getattr(args, "video_fit", "band"))
+                except Exception as e:
+                    log("วิดีโอ error:", type(e).__name__, e); canvas = None
+                if canvas is None:                          # decode พลาด → กลับ visualizer เฟรมนี้
+                    canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
+            else:
+                canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
             wire = to_wire(canvas, info["width"], info["height"], angle)
             try:
                 lcd.send_jpeg(to_jpeg(wire, args.quality))
