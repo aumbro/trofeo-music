@@ -232,7 +232,11 @@ def clock_item(key):
                     radio=True)
 
 
+_QUIT = {"q": False}       # แยก "ผู้ใช้สั่งออก" ออกจาก "run() ตายเอง" (ต้องรีสตาร์ต)
+
+
 def do_quit(icon, item):
+    _QUIT["q"] = True
     stop_evt.set()
     icon.stop()
 
@@ -308,13 +312,21 @@ MENU = Menu(
 
 
 def render_loop():
-    """รัน vibe.run() — มี USB reconnect ในตัว; ถ้าหลุดจริงรอแล้วเริ่มใหม่"""
-    while not stop_evt.is_set():
+    """รัน vibe.run() — ถ้าตายเอง (exception) รีสตาร์ตเสมอ; ออกจริงเฉพาะผู้ใช้กดออก
+    หมายเหตุ: run() ตั้ง stop_evt ใน finally ของมัน (พฤติกรรม CLI) → ต้อง clear ก่อนรอบใหม่
+    ไม่งั้นลูปนี้ตายถาวร = อาการ 'จอนิ่งไปเลย'"""
+    import time as _t
+    import traceback
+    while True:
         try:
             vibe.run(cfg, stop_evt)
-        except Exception as e:
-            vibe.log("tray: vibe.run หยุด:", type(e).__name__, e, "— เริ่มใหม่ใน 3s")
-            stop_evt.wait(3.0)
+        except Exception:
+            vibe.log("tray: vibe.run พัง:\n" + traceback.format_exc())
+        if _QUIT["q"]:
+            break
+        vibe.log("tray: รีสตาร์ต render ใน 2s")
+        stop_evt.clear()
+        _t.sleep(2.0)
 
 
 def main():

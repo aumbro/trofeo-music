@@ -1832,32 +1832,38 @@ def run(args, stop_evt=None):
                     snap["_viz"], snap["_invert"] = "dots", True
                 else:
                     snap["_viz"] = rnd_viz
-            player = ensure_video()
             use_angle = angle
-            if player is not None:                          # โหมดวิดีโอ: เฟรมวิดีโอแทน visualizer
-                cw, ch = (PANEL_H, PANEL_W) if args.portrait else (PANEL_W, PANEL_H)
-                try:
-                    canvas = player.get_pil(loop_t - vp["t0"], cw, ch,
-                                            getattr(args, "video_fit", "band"),
-                                            pan=getattr(args, "video_pan", True))
-                except Exception as e:
-                    log("วิดีโอ error:", type(e).__name__, e); canvas = None
-                if canvas is None:                          # decode พลาด → กลับ visualizer เฟรมนี้
-                    canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
-            elif getattr(args, "clock", False):             # โหมดนาฬิกา (แนวนอนเสมอ)
-                if getattr(args, "clock_cycle", False):
-                    style = clocks.STYLES[int(t / CLK_CYCLE_EVERY) % len(clocks.STYLES)]
+            # ── สร้างเฟรม: exception ใด ๆ = ข้ามเฟรมนี้ ไม่ปล่อยหลุดไปฆ่า run() ──
+            try:
+                player = ensure_video()
+                if player is not None:                      # โหมดวิดีโอ: เฟรมวิดีโอแทน visualizer
+                    cw, ch = (PANEL_H, PANEL_W) if args.portrait else (PANEL_W, PANEL_H)
+                    try:
+                        canvas = player.get_pil(loop_t - vp["t0"], cw, ch,
+                                                getattr(args, "video_fit", "band"),
+                                                pan=getattr(args, "video_pan", True))
+                    except Exception as e:
+                        log("วิดีโอ error:", type(e).__name__, e); canvas = None
+                    if canvas is None:                      # decode พลาด → กลับ visualizer เฟรมนี้
+                        canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
+                elif getattr(args, "clock", False):         # โหมดนาฬิกา (แนวนอนเสมอ)
+                    if getattr(args, "clock_cycle", False):
+                        style = clocks.STYLES[int(t / CLK_CYCLE_EVERY) % len(clocks.STYLES)]
+                    else:
+                        style = getattr(args, "clock_style", None) or "nixie"
+                    if style != clk["style"]:
+                        clk["style"] = style
+                        log("นาฬิกา:", clocks.STYLE_LABELS.get(style, style))
+                    canvas = clocks.render(style, PANEL_W, PANEL_H, datetime.now(), t)
+                    use_angle = base                        # นาฬิกาไม่หมุนตาม portrait
                 else:
-                    style = getattr(args, "clock_style", None) or "nixie"
-                if style != clk["style"]:
-                    clk["style"] = style
-                    log("นาฬิกา:", clocks.STYLE_LABELS.get(style, style))
-                canvas = clocks.render(style, PANEL_W, PANEL_H, datetime.now(), t)
-                use_angle = base                            # นาฬิกาไม่หมุนตาม portrait
-            else:
-                snap["_art_live"] = art_live_frame(loop_t, t)
-                canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
-            wire = to_wire(canvas, info["width"], info["height"], use_angle)
+                    snap["_art_live"] = art_live_frame(loop_t, t)
+                    canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
+                wire = to_wire(canvas, info["width"], info["height"], use_angle)
+            except Exception as e:
+                log("render error:", type(e).__name__, e, "— ข้ามเฟรม")
+                stop_evt.wait(0.3)
+                continue
             try:
                 lcd.send_jpeg(to_jpeg(wire, args.quality))
             except Exception as e:            # USB glitch (I/O error ฯลฯ) → reconnect ไม่ crash
