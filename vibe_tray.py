@@ -270,6 +270,8 @@ MENU = Menu(
         viz_item("ribbon (คลื่นโปร่งแสง)", "ribbon"),
         viz_item("wave (particle)", "wave"),
         viz_item("random (สุ่มสลับ)", "random"),
+        Menu.SEPARATOR,
+        MenuItem("dots กลับหัว", toggle_invert, checked=lambda i: cfg.invert),
     )),
     MenuItem("สไตล์นาฬิกาเต็มจอ", Menu(
         *[clock_item(k) for k in clocks.STYLES],
@@ -305,7 +307,6 @@ MENU = Menu(
     Menu.SEPARATOR,
     MenuItem("เนื้อเพลง (คาราโอเกะ)", toggle_lyrics, checked=lambda i: cfg.lyrics),
     MenuItem("ClaudePix มัสคอต", toggle_mascot, checked=lambda i: cfg.mascot),
-    MenuItem("dots กลับหัว", toggle_invert, checked=lambda i: cfg.invert),
     Menu.SEPARATOR,
     MenuItem("ออก", do_quit),
 )
