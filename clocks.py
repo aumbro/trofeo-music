@@ -1148,6 +1148,219 @@ def _r_cyberpunk(W, H, now, t):
     return base
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  render_art — นาฬิกาแบบจัตุรัส S×S สำหรับช่องปกอัลบั้มของ vibe
+#  หน้าปัดกลม (analog/lumo/mech) = ครอปกลางจากเรนเดอร์เต็ม; ที่เหลือมีเวอร์ชันย่อ
+# ═════════════════════════════════════════════════════════════════════════════
+def _a_digital(S, now, on, off, glow, blur, base, date_col):
+    gi, gm, colw = 4, 7, 12
+    # ผังคือ dd:dd:dd → กว้างรวม = 6dw + 2colw + 4gi + 4gm (ประมาณ) — เผื่อขอบ 20
+    dw = (S - 2 * colw - 4 * gi - 4 * gm - 20) // 6
+    dh, th = int(dw * 1.9), max(6, dw // 4)
+    base = _draw_digital(base, S, S, now.hour, now.minute, now.second,
+                         on=on, off=off, glow_col=glow, blur=blur,
+                         dw=dw, dh=dh, th=th, gi=gi, gm=gm, colw=colw)
+    _text_c(ImageDraw.Draw(base), S / 2, S / 2 + dh / 2 + 32,
+            now.strftime("%a %d %b").upper(), _f("mono", 18), date_col)
+    return base
+
+
+def _a_seg7(S, now, t):
+    base = Image.new("RGB", (S, S), (8, 6, 6))
+    v = _vignette(S, S, 100, 255)
+    base = ImageChops.multiply(base, Image.merge("RGB", (v, v, v)))
+    return _a_digital(S, now, (255, 42, 38), (40, 8, 8), (150, 20, 18), 10,
+                      base, (120, 30, 26))
+
+
+def _a_vfd(S, now, t):
+    base = Image.new("RGB", (S, S), (4, 12, 12))
+    d = ImageDraw.Draw(base)
+    for gx in range(0, S, 5):
+        d.line([(gx, 0), (gx, S)], fill=(6, 20, 20))
+    return _a_digital(S, now, (90, 240, 210), (12, 46, 44), (40, 150, 130), 9,
+                      base, (70, 190, 170))
+
+
+def _a_lcd(S, now, t):
+    base = Image.new("RGB", (S, S), (150, 168, 78))
+    ImageDraw.Draw(base).rounded_rectangle([8, 8, S - 8, S - 8], radius=18,
+                                           outline=(60, 72, 30), width=4)
+    return _a_digital(S, now, (26, 34, 12), (132, 150, 66), (0, 0, 0), 0,
+                      base, (40, 52, 18))
+
+
+def _a_nixie(S, now, t):
+    base = Image.new("RGB", (S, S), (12, 9, 8))
+    v = _vignette(S, S, 90, 255)
+    base = ImageChops.multiply(base, Image.merge("RGB", (v, v, v)))
+    dw, colw, gap = int(S * 0.19), int(S * 0.068), int(S * 0.024)
+    dh = int(S * 0.44)
+    total = 4 * dw + colw + 4 * gap
+    x0, y = (S - total) / 2, (S - dh) / 2 - 8
+    digits = f"{now.hour:02d}{now.minute:02d}"
+    fnt = _f("nixie", int(dh * 0.82))
+    d = ImageDraw.Draw(base, "RGBA")
+    xs, x = [], x0
+    for i in range(5):                            # d d c d d
+        if i == 2:
+            x += colw + gap
+            continue
+        gx0, gy0, gx1, gy1 = x - 5, y - 16, x + dw + 5, y + dh + 12
+        d.rounded_rectangle([gx0, gy0, gx1, gy1], radius=26,
+                            fill=(18, 20, 26, 170), outline=(44, 48, 58, 210), width=2)
+        d.rounded_rectangle([gx0 + 3, gy1 - 18, gx1 - 3, gy1 + 3], radius=6,
+                            fill=(34, 28, 22, 255))
+        xs.append(x + dw / 2)
+        x += dw + gap
+    strokes = Image.new("RGB", (S, S), (0, 0, 0))
+    dg = ImageDraw.Draw(strokes)
+    for cx_, ch in zip(xs, digits):
+        d.text((cx_, y + dh / 2), "8", font=fnt, fill=(90, 44, 20, 36), anchor="mm")
+        dg.text((cx_, y + dh / 2), ch, font=fnt, fill=(255, 96, 20), anchor="mm")
+    ccx = x0 + 2 * dw + gap + colw / 2 + gap / 2
+    if now.second % 2 == 0:
+        for cy_ in (y + dh * 0.35, y + dh * 0.65):
+            dg.ellipse([ccx - 5, cy_ - 5, ccx + 5, cy_ + 5], fill=(255, 110, 30))
+    base = _glow_add(base, strokes, 14, 0.9)
+    base = _glow_add(base, strokes, 6, 1.0)
+    d2 = ImageDraw.Draw(base)
+    for cx_, ch in zip(xs, digits):
+        d2.text((cx_, y + dh / 2), ch, font=fnt, fill=(255, 130, 40), anchor="mm")
+        d2.text((cx_, y + dh / 2), ch, font=_f("nixie", int(dh * 0.76)),
+                fill=(255, 190, 126), anchor="mm")
+    if now.second % 2 == 0:
+        for cy_ in (y + dh * 0.35, y + dh * 0.65):
+            d2.ellipse([ccx - 5, cy_ - 5, ccx + 5, cy_ + 5], fill=(255, 150, 70))
+    _text_c(d2, S / 2, S - 26, now.strftime("%a %d %b").upper(),
+            _f("mono", 17), (150, 84, 36))
+    return base
+
+
+def _a_flip(S, now, t):
+    base = Image.new("RGB", (S, S), (14, 14, 16))
+    g = 14
+    cw = chh = (S - 3 * g) // 2
+    fnt = _f("sans", int(chh * 0.66))
+    digits = f"{now.hour:02d}{now.minute:02d}"
+    pos = [(g, g), (2 * g + cw, g), (g, 2 * g + chh), (2 * g + cw, 2 * g + chh)]
+    for i, cur in enumerate(digits):
+        key = ("art", i)
+        st = _FLIP.get(key)
+        if st is None:
+            _FLIP[key] = st = {"d": cur, "old": cur, "ct": t - 1.0}
+        elif st["d"] != cur:
+            st["old"] = st["d"]; st["d"] = cur; st["ct"] = t
+        p = min(1.0, (t - st["ct"]) / _FLIP_DUR)
+        _draw_flip(base, pos[i][0], pos[i][1], cw, chh, st["old"], st["d"], p, fnt)
+    return base
+
+
+def _a_neon(S, now, t):
+    img = Image.new("RGB", (S, S), (14, 10, 20))
+    top = Image.new("RGB", (S, S), (30, 16, 40))
+    m = Image.linear_gradient("L").resize((S, S))
+    base = Image.composite(img, top, m)
+    txt = now.strftime("%H:%M")
+    fnt = _f("sans", int(S * 0.30))
+    strokes = Image.new("RGB", (S, S), (0, 0, 0))
+    ImageDraw.Draw(strokes).text((S / 2, S / 2 - 14), txt, font=fnt,
+                                 fill=(255, 60, 170), anchor="mm")
+    base = _glow_add(base, strokes, 16, 1.2)
+    base = _glow_add(base, strokes, 7, 1.0)
+    d = ImageDraw.Draw(base)
+    d.text((S / 2, S / 2 - 14), txt, font=fnt, fill=(255, 190, 230), anchor="mm",
+           stroke_width=2, stroke_fill=(255, 90, 180))
+    d.text((S / 2, S / 2 + int(S * 0.20)), now.strftime(":%S"), font=_f("sans", int(S * 0.11)),
+           fill=(120, 230, 255), anchor="mm")
+    return base
+
+
+def _a_minimal(S, now, t):
+    base = Image.new("RGB", (S, S), (10, 10, 12))
+    d = ImageDraw.Draw(base)
+    d.text((S / 2, S / 2 - 16), now.strftime("%H:%M"), font=_f("thin", int(S * 0.30)),
+           fill=(238, 240, 246), anchor="mm")
+    d.text((S / 2, S / 2 + int(S * 0.17)), now.strftime("%a %d %b").upper(),
+           font=_f("thin", 20), fill=(120, 124, 134), anchor="mm")
+    frac = (now.second + now.microsecond / 1e6) / 60
+    d.rectangle([0, S - 5, int(S * frac), S], fill=(90, 140, 220))
+    return base
+
+
+def _a_sun(S, now, t):
+    td = now.hour + now.minute / 60 + now.second / 3600
+    horizon = S - 44
+    top, mid, bot = _sky_cols(td)
+    h2 = horizon // 2
+    col = np.vstack([np.linspace(top, mid, h2, endpoint=False),
+                     np.linspace(mid, bot, horizon - h2)]).astype(np.uint8)
+    base = Image.new("RGB", (S, S), (9, 11, 15))
+    base.paste(Image.fromarray(np.repeat(col[:, None, :], S, axis=1), "RGB"), (0, 0))
+    d = ImageDraw.Draw(base, "RGBA")
+    if _SUNRISE <= td <= _SUNSET:
+        f = (td - _SUNRISE) / (_SUNSET - _SUNRISE)
+        sx = 36 + f * (S - 72)
+        sy = horizon - 14 - math.sin(f * math.pi) * (horizon - 70)
+        strokes = Image.new("RGB", (S, S), (0, 0, 0))
+        warm = 1 - math.sin(f * math.pi)
+        scol = tuple(int(a + (b - a) * warm) for a, b in zip((255, 216, 130), (255, 128, 56)))
+        ImageDraw.Draw(strokes).ellipse([sx - 15, sy - 15, sx + 15, sy + 15], fill=scol)
+        base = _glow_add(base, strokes, 18, 1.0)
+        d = ImageDraw.Draw(base, "RGBA")
+        d.ellipse([sx - 12, sy - 12, sx + 12, sy + 12], fill=(255, 246, 216))
+    else:
+        nf = ((td - _SUNSET) % 24) / (24 - (_SUNSET - _SUNRISE))
+        sx = 36 + nf * (S - 72)
+        sy = horizon - 14 - math.sin(nf * math.pi) * (horizon - 74)
+        d.ellipse([sx - 11, sy - 11, sx + 11, sy + 11], fill=(232, 236, 246))
+        bgc = tuple(int(v) for v in col[min(horizon - 1, max(0, int(sy - 4)))])
+        d.ellipse([sx - 11 + 7, sy - 11 - 3, sx + 11 + 7, sy + 11 - 3], fill=bgc)
+        for i in range(36):
+            zx, zy = (i * 397 + 53) % S, (i * 211 + 31) % (horizon - 50)
+            aa = int(190 * (0.5 + 0.5 * math.sin(t * 2.4 + i * 1.7)))
+            d.ellipse([zx - 1, zy - 1, zx + 1, zy + 1], fill=(255, 255, 255, aa))
+    for (colr, amp, ph0) in (((24, 28, 42, 255), 26, 1.3), ((10, 12, 18, 255), 16, 0.2)):
+        pts = [(0, horizon)]
+        for x in range(0, S + 20, 20):
+            pts.append((x, horizon - 8 - amp * abs(math.sin(x * 0.012 + ph0))))
+        pts += [(S, horizon)]
+        d.polygon(pts, fill=colr)
+    d.rectangle([0, horizon, S, S], fill=(9, 11, 15))
+    d.text((S / 2, S / 2 - 6), now.strftime("%H:%M"), font=_f("thin", int(S * 0.26)),
+           fill=(250, 250, 252), anchor="mm", stroke_width=3, stroke_fill=(14, 17, 26))
+    return base
+
+
+def _a_word(S, now, t):
+    return _r_word(S, S, now, t)
+
+
+_ART_RENDER = {
+    "seg7": _a_seg7, "vfd": _a_vfd, "lcd": _a_lcd, "nixie": _a_nixie,
+    "flip": _a_flip, "neon": _a_neon, "minimal": _a_minimal,
+    "sun": _a_sun, "word": _a_word,
+}
+
+
+def render_art(style, S, now, t=0.0):
+    """นาฬิกาจัตุรัส S×S สำหรับช่องปกอัลบั้ม — รองรับทุกสไตล์ (world/cyberpunk → หน้าปัดเรืองแสง)"""
+    try:
+        fn = _ART_RENDER.get(style)
+        if fn is not None:
+            return fn(S, now, t)
+        dial = style if style in ("analog", "lumo", "mech") else "lumo"
+        full = _RENDER[dial](1920, 462, now, t)
+        x0 = (1920 - 462) // 2
+        return full.crop((x0, 0, x0 + 462, 462)).resize((S, S), Image.LANCZOS)
+    except Exception:
+        img = Image.new("RGB", (S, S), (10, 8, 7))
+        ImageDraw.Draw(img).text((S / 2, S / 2), now.strftime("%H:%M"),
+                                 font=_f("sans", int(S * 0.28)),
+                                 fill=(255, 138, 40), anchor="mm")
+        return img
+
+
 _RENDER = {
     "nixie": _r_nixie, "flip": _r_flip, "vfd": _r_vfd, "seg7": _r_seg7,
     "lcd": _r_lcd, "analog": _r_analog, "lumo": _r_lumo, "mech": _r_mech,

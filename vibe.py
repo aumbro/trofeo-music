@@ -499,7 +499,7 @@ class VideoPlayer:
             return None
         return self._fit(self.last, W, H, mode, elapsed, pan)
 
-    PAN_PERIOD = 60.0        # วินาที/รอบแพน (ไป-กลับ) — ยิ่งมากยิ่งช้า
+    PAN_PERIOD = 120.0       # วินาที/รอบแพน (ไป-กลับ) — ยิ่งมากยิ่งช้า
 
     def _fit(self, bgr, W, H, mode, elapsed=0.0, pan=True):
         cv2 = self.cv2
@@ -1724,13 +1724,12 @@ def run(args, stop_evt=None):
 
     def art_live_frame(loop_t, t):
         src = getattr(args, "art_source", "art")
-        if src == "clock":                            # นาฬิกาย่อส่วน (สไตล์หน้าปัดกลม)
-            style = getattr(args, "clock_style", None)
-            if style not in ("analog", "lumo", "mech"):
-                style = "lumo"
-            full = clocks.render(style, PANEL_W, PANEL_H, datetime.now(), t)
-            x0 = (PANEL_W - PANEL_H) // 2
-            return full.crop((x0, 0, x0 + PANEL_H, PANEL_H))
+        if src == "clock":                            # นาฬิกาจัตุรัส — ทุกสไตล์
+            if getattr(args, "clock_cycle", False):   # โหมดหมุนเวียน → วนที่ปกด้วย
+                style = clocks.STYLES[int(t / 45.0) % len(clocks.STYLES)]
+            else:
+                style = getattr(args, "clock_style", None) or "lumo"
+            return clocks.render_art(style, ART, datetime.now(), t)
         if src == "video":
             path = getattr(args, "art_video_path", None)
             if not path:
