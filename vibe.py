@@ -499,7 +499,7 @@ class VideoPlayer:
             return None
         return self._fit(self.last, W, H, mode, elapsed, pan)
 
-    PAN_PERIOD = 40.0        # วินาที/รอบแพน (ไป-กลับ) — ยิ่งมากยิ่งช้า
+    PAN_PERIOD = 60.0        # วินาที/รอบแพน (ไป-กลับ) — ยิ่งมากยิ่งช้า
 
     def _fit(self, bgr, W, H, mode, elapsed=0.0, pan=True):
         cv2 = self.cv2
@@ -523,6 +523,40 @@ class VideoPlayer:
             y = int((nh - H) * ph) if nh > H else 0
             canvas = resized[y:y + H, x:x + W]
         return Image.fromarray(canvas)
+
+
+class GifArt:
+    """รูปนิ่ง/GIF สำหรับช่องปกอัลบั้ม — preload ทุกเฟรม (cover-crop จัตุรัส) + เวลาต่อเฟรม"""
+
+    def __init__(self, path, size):
+        im = Image.open(path)
+        self.frames, self.durs = [], []
+        try:
+            while True:
+                fr = im.convert("RGB")
+                sw, sh = fr.size
+                s = min(sw, sh)
+                fr = fr.crop(((sw - s) // 2, (sh - s) // 2,
+                              (sw - s) // 2 + s, (sh - s) // 2 + s))
+                self.frames.append(fr.resize((size, size), Image.LANCZOS))
+                self.durs.append(max(0.02, im.info.get("duration", 100) / 1000.0))
+                im.seek(im.tell() + 1)
+        except EOFError:
+            pass
+        if not self.frames:
+            raise RuntimeError("อ่านภาพไม่ได้")
+        self.total = sum(self.durs)
+
+    def get(self, elapsed):
+        if len(self.frames) == 1:
+            return self.frames[0]
+        tt = elapsed % self.total
+        acc = 0.0
+        for fr, du in zip(self.frames, self.durs):
+            acc += du
+            if tt < acc:
+                return fr
+        return self.frames[-1]
 
 
 def demo_bands(n, t):
@@ -963,7 +997,13 @@ def render(snap, bands, audio_active, t, peaks=None, mascot=None):
     force_m = snap.get("_force_mascot")
     if snap.get("_glow", True):
         draw_art_glow(img, ART_X, ART_Y, ART, 44, accent, glow_strength(mascot))
-    if art_assets and not force_m:
+    live = snap.get("_art_live")
+    if live is not None and not force_m:          # นาฬิกา/วิดีโอ/รูป/GIF แทนปก
+        la = live if live.size == (ART, ART) else live.resize((ART, ART), Image.LANCZOS)
+        la = la.copy()
+        la.putalpha(_round_mask((ART, ART), 24))
+        img.paste(la, (ART_X, ART_Y), la)
+    elif art_assets and not force_m:
         img.paste(art_assets[0], (ART_X, ART_Y), art_assets[0])
         if snap.get("_sparkle", True):
             draw_sparkles(d, ART_X, ART_Y, ART, ART, t, getattr(mascot, "kick", 0.0))
@@ -1408,7 +1448,12 @@ def render_portrait(snap, bands, audio_active, t, peaks=None, mascot=None):
     force_m = snap.get("_force_mascot")
     if snap.get("_glow", True):
         draw_art_glow(img, ax, ay, ART_P, 50, accent, glow_strength(mascot))
-    if art_assets and not force_m:
+    live = snap.get("_art_live")
+    if live is not None and not force_m:          # นาฬิกา/วิดีโอ/รูป/GIF แทนปก
+        la = live.resize((ART_P, ART_P), Image.LANCZOS)
+        la.putalpha(_round_mask((ART_P, ART_P), 28))
+        img.paste(la, (ax, ay), la)
+    elif art_assets and not force_m:
         cover = art_assets[0].resize((ART_P, ART_P), Image.LANCZOS)
         img.paste(cover, (ax, ay), cover)
         if snap.get("_sparkle", True):
@@ -1531,6 +1576,10 @@ def main():
                     help="band=คลิปกลางเต็มจอ (ตัดหัว-ท้าย) · fit=ย่อทั้งคลิป (แถบดำข้าง)")
     ap.add_argument("--no-video-pan", action="store_true",
                     help="ปิดแพนช้า ๆ ของโหมด band (crop กลางตายตัว)")
+    ap.add_argument("--art-source", choices=["art", "clock", "video", "image"], default="art",
+                    help="ช่องปกอัลบั้ม: art=ปกจริง clock=นาฬิกา video/image=ไฟล์ (--art-file)")
+    ap.add_argument("--art-file", metavar="FILE",
+                    help="ไฟล์วิดีโอ/รูป/GIF สำหรับ --art-source video|image")
     ap.add_argument("--clock", nargs="?", const="nixie", choices=clocks.STYLES,
                     metavar="STYLE", help="โหมดนาฬิกา: " + " ".join(clocks.STYLES))
     ap.add_argument("--clock-cycle", action="store_true",
@@ -1540,6 +1589,8 @@ def main():
     args.video_path = args.video          # run() ใช้ video_path; --video เปิดโหมดเลย
     args.video = bool(args.video)
     args.video_pan = not args.no_video_pan
+    args.art_video_path = args.art_file if args.art_source == "video" else None
+    args.art_image_path = args.art_file if args.art_source == "image" else None
     args.clock_style = args.clock         # run() ใช้ clock_style
     args.clock = bool(args.clock) or args.clock_cycle
     run(args)
@@ -1668,6 +1719,56 @@ def run(args, stop_evt=None):
     clk = {"style": None}
     CLK_CYCLE_EVERY = 45.0                # หมุนเวียนสไตล์ทุก 45 วิ
 
+    # ── ปกอัลบั้มแบบ live: นาฬิกา/วิดีโอ/รูป/GIF แทนปก (art_source) ──
+    av = {"vp": None, "vp_path": None, "gif": None, "gif_path": None, "t0": 0.0}
+
+    def art_live_frame(loop_t, t):
+        src = getattr(args, "art_source", "art")
+        if src == "clock":                            # นาฬิกาย่อส่วน (สไตล์หน้าปัดกลม)
+            style = getattr(args, "clock_style", None)
+            if style not in ("analog", "lumo", "mech"):
+                style = "lumo"
+            full = clocks.render(style, PANEL_W, PANEL_H, datetime.now(), t)
+            x0 = (PANEL_W - PANEL_H) // 2
+            return full.crop((x0, 0, x0 + PANEL_H, PANEL_H))
+        if src == "video":
+            path = getattr(args, "art_video_path", None)
+            if not path:
+                return None
+            if av["vp"] is None or av["vp_path"] != path:
+                if av["vp"] is not None:
+                    av["vp"].close()
+                try:
+                    av["vp"] = VideoPlayer(path)
+                    av["vp_path"], av["t0"] = path, loop_t
+                    log("ปก=วิดีโอ:", path)
+                except Exception as e:
+                    log("เปิดวิดีโอปกไม่ได้:", e)
+                    av["vp"], av["vp_path"] = None, None
+                    args.art_source = "art"
+                    return None
+            try:
+                return av["vp"].get_pil(loop_t - av["t0"], ART, ART, "band",
+                                        pan=getattr(args, "video_pan", True))
+            except Exception:
+                return None
+        if src == "image":
+            path = getattr(args, "art_image_path", None)
+            if not path:
+                return None
+            if av["gif"] is None or av["gif_path"] != path:
+                try:
+                    av["gif"] = GifArt(path, ART)
+                    av["gif_path"], av["t0"] = path, loop_t
+                    log("ปก=รูป/GIF:", path, f"({len(av['gif'].frames)} เฟรม)")
+                except Exception as e:
+                    log("เปิดรูปปกไม่ได้:", e)
+                    av["gif"], av["gif_path"] = None, None
+                    args.art_source = "art"
+                    return None
+            return av["gif"].get(loop_t - av["t0"])
+        return None
+
     # ── โหมดวิดีโอ: เปิด/ปิด/เปลี่ยนไฟล์ได้สดจาก tray (อ่าน args ทุกเฟรม) ──
     vp = {"player": None, "path": None, "t0": 0.0}
 
@@ -1751,6 +1852,7 @@ def run(args, stop_evt=None):
                 canvas = clocks.render(style, PANEL_W, PANEL_H, datetime.now(), t)
                 use_angle = base                            # นาฬิกาไม่หมุนตาม portrait
             else:
+                snap["_art_live"] = art_live_frame(loop_t, t)
                 canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
             wire = to_wire(canvas, info["width"], info["height"], use_angle)
             try:

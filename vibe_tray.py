@@ -53,6 +53,10 @@ class Cfg:
         self.video_path = None
         self.video_fit = "band"    # band=คลิปกลางเต็มจอ · fit=ย่อทั้งคลิปมีแถบดำ
         self.video_pan = True      # band: แพนช้า ๆ ในส่วนที่ล้นจอ
+        # ── ช่องปกอัลบั้ม: art=ปกจริง | clock | video | image (รูป/GIF) ──
+        self.art_source = "art"
+        self.art_video_path = None
+        self.art_image_path = None
         # ── โหมดนาฬิกา (แนวนอนเสมอ) ──
         self.clock = False
         self.clock_style = "nixie"
@@ -148,6 +152,44 @@ def toggle_video_pan(icon, item):
     cfg.video_pan = not cfg.video_pan
 
 
+# ── ช่องปกอัลบั้ม ────────────────────────────────────────────────────────────
+def _pick_file(title, types):
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askopenfilename(title=title, filetypes=types)
+        root.destroy()
+        return path or None
+    except Exception as e:
+        vibe.log("tray: เปิด dialog ไม่ได้:", e)
+        return None
+
+
+def make_set_art(val):
+    def f(icon, item):
+        cfg.art_source = val
+    return f
+
+
+def pick_art_video(icon, item):
+    path = _pick_file("เลือกวิดีโอแทนปกอัลบั้ม",
+                      [("วิดีโอ", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("ทั้งหมด", "*.*")])
+    if path:
+        cfg.art_video_path = path
+        cfg.art_source = "video"
+
+
+def pick_art_image(icon, item):
+    path = _pick_file("เลือกรูป/GIF แทนปกอัลบั้ม",
+                      [("รูป/GIF", "*.gif *.png *.jpg *.jpeg *.webp *.bmp"), ("ทั้งหมด", "*.*")])
+    if path:
+        cfg.art_image_path = path
+        cfg.art_source = "image"
+
+
 def toggle_clock(icon, item):
     cfg.clock = not cfg.clock
 
@@ -200,6 +242,16 @@ MENU = Menu(
         viz_item("random (สุ่มสลับ)", "random"),
     )),
     Menu.SEPARATOR,
+    MenuItem("ปกอัลบั้ม", Menu(
+        MenuItem("ปกจริง (จากเพลง)", make_set_art("art"),
+                 checked=lambda i: cfg.art_source == "art", radio=True),
+        MenuItem("นาฬิกา (หน้าปัดกลม)", make_set_art("clock"),
+                 checked=lambda i: cfg.art_source == "clock", radio=True),
+        MenuItem("วิดีโอ...", pick_art_video,
+                 checked=lambda i: cfg.art_source == "video", radio=True),
+        MenuItem("รูป / GIF...", pick_art_image,
+                 checked=lambda i: cfg.art_source == "image", radio=True),
+    )),
     MenuItem("นาฬิกา", Menu(
         MenuItem("เปิด/ปิดนาฬิกา", toggle_clock, checked=lambda i: cfg.clock),
         Menu.SEPARATOR,
