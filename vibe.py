@@ -944,8 +944,8 @@ def render(snap, bands, audio_active, t, peaks=None, mascot=None):
     d = ImageDraw.Draw(img, "RGBA")
 
     # ── โหมด --full: viz/เนื้อเพลง เต็มจอ (ไม่มีเลย์เอาต์ปกซ้าย) ──
-    if snap.get("_full") and (snap.get("_lyrics_mode")
-                              or snap.get("_viz") in ("wave", "dots", "bars", "ribbon", "classic")):
+    # _viz=None (ค่าเริ่มต้น) ก็ต้องเข้าโหมดเต็มจอ — _render_full มี default (particle wave)
+    if snap.get("_full"):
         return _render_full(snap, img, bands, t, peaks, mascot, accent, snap.get("_viz"), have)
 
     # ── visualizer (วาดก่อน ให้ข้อความอยู่หน้า) — default=แท่งคลาสสิก · --viz เปลี่ยนสไตล์ ──

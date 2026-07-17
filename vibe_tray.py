@@ -84,14 +84,17 @@ def make_icon():
 # ── actions ────────────────────────────────────────────────────────────────
 def set_landscape(icon, item):
     cfg.portrait, cfg.full = False, False
+    cfg.video = cfg.clock = False          # เลย์เอาต์คือของโหมดเพลง → สลับกลับให้เลย
 
 
 def set_full(icon, item):
     cfg.portrait, cfg.full = False, True
+    cfg.video = cfg.clock = False
 
 
 def set_portrait(icon, item):
     cfg.portrait, cfg.full = True, False
+    cfg.video = cfg.clock = False
 
 
 def make_set_viz(val):
