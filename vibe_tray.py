@@ -111,10 +111,6 @@ def toggle_mascot(icon, item):
     cfg.mascot = not cfg.mascot
 
 
-def toggle_invert(icon, item):
-    cfg.invert = not cfg.invert
-
-
 # ── โหมดจอ (radio เดียว สลับได้ทันที ไม่ต้องปิดของเก่า) ──────────────────────
 def set_mode_music(icon, item):
     cfg.video = False
@@ -266,12 +262,11 @@ MENU = Menu(
         viz_item("ค่าเริ่มต้น", None),
         viz_item("classic (เงาสะท้อน)", "classic"),
         viz_item("dots (LED matrix)", "dots"),
+        viz_item("dots กลับหัว (หยดน้ำ)", "dots-inv"),
         viz_item("bars (waveform)", "bars"),
         viz_item("ribbon (คลื่นโปร่งแสง)", "ribbon"),
         viz_item("wave (particle)", "wave"),
         viz_item("random (สุ่มสลับ)", "random"),
-        Menu.SEPARATOR,
-        MenuItem("dots กลับหัว", toggle_invert, checked=lambda i: cfg.invert),
     )),
     MenuItem("สไตล์นาฬิกาเต็มจอ", Menu(
         *[clock_item(k) for k in clocks.STYLES],

@@ -1544,7 +1544,7 @@ def main():
                     help="ปิดประกายวิบวับบนปก")
     ap.add_argument("--no-glow", dest="glow", action="store_false",
                     help="ปิดขอบปกเรืองแสงเต้นตามบีต")
-    ap.add_argument("--viz", choices=["wave", "dots", "bars", "ribbon", "classic", "random"],
+    ap.add_argument("--viz", choices=["wave", "dots", "dots-inv", "bars", "ribbon", "classic", "random"],
                     default=None,
                     help="visualizer: wave=particle, dots=LED matrix, bars=waveform มิเรอร์, "
                          "ribbon=คลื่นริบบิ้นโปร่งแสง, classic=แท่งมีเงาสะท้อน, random=สุ่มสลับ "
@@ -1628,8 +1628,11 @@ def run(args, stop_evt=None):
             snap["_force_mascot"] = True
         snap["_sparkle"] = args.sparkle
         snap["_glow"] = args.glow
-        snap["_viz"] = args.viz
-        snap["_invert"] = args.invert
+        # "dots-inv" = สไตล์เดียวกับ dots แต่กลับหัว (เลือกจากลิสต์ viz ตรง ๆ)
+        if args.viz == "dots-inv":
+            snap["_viz"], snap["_invert"] = "dots", True
+        else:
+            snap["_viz"], snap["_invert"] = args.viz, args.invert
         snap["_full"] = args.full
         snap["_lyrics_mode"] = args.lyrics
         return snap
@@ -1650,8 +1653,10 @@ def run(args, stop_evt=None):
             snap["_force_mascot"] = True
         snap["_sparkle"] = args.sparkle
         snap["_glow"] = args.glow
-        snap["_viz"] = args.viz
-        snap["_invert"] = args.invert
+        if args.viz == "dots-inv":
+            snap["_viz"], snap["_invert"] = "dots", True
+        else:
+            snap["_viz"], snap["_invert"] = args.viz, args.invert
         snap["_full"] = args.full
         snap["_lyrics_mode"] = args.lyrics
         if args.lyrics:                              # เนื้อเพลง demo (ไว้ดูหน้าตา)
