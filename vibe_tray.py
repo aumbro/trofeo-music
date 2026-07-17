@@ -55,6 +55,7 @@ class Cfg:
         self.video_pan = True      # band: แพนช้า ๆ ในส่วนที่ล้นจอ
         # ── ช่องปกอัลบั้ม: art=ปกจริง | clock | video | image (รูป/GIF) ──
         self.art_source = "art"
+        self.art_clock_style = "lumo"   # สไตล์นาฬิกาของปก (แยกจากนาฬิกาเต็มจอ); "cycle"=วน
         self.art_video_path = None
         self.art_image_path = None
         # ── โหมดนาฬิกา (แนวนอนเสมอ) ──
@@ -111,35 +112,36 @@ def toggle_invert(icon, item):
     cfg.invert = not cfg.invert
 
 
+# ── โหมดจอ (radio เดียว สลับได้ทันที ไม่ต้องปิดของเก่า) ──────────────────────
+def set_mode_music(icon, item):
+    cfg.video = False
+    cfg.clock = False
+
+
+def set_mode_clock(icon, item):
+    cfg.clock = True
+    cfg.video = False
+
+
+def set_mode_video(icon, item):
+    if not cfg.video_path:
+        path = _pick_file("เลือกไฟล์วิดีโอ",
+                          [("วิดีโอ", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("ทั้งหมด", "*.*")])
+        if not path:
+            return
+        cfg.video_path = path
+    cfg.video = True
+    cfg.clock = False
+
+
 def pick_video(icon, item):
-    """เปิด dialog เลือกไฟล์วิดีโอ → เปิดโหมดวิดีโอเลย"""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        path = filedialog.askopenfilename(
-            title="เลือกไฟล์วิดีโอ",
-            filetypes=[("วิดีโอ", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"),
-                       ("ทั้งหมด", "*.*")])
-        root.destroy()
-    except Exception as e:
-        vibe.log("tray: เปิด dialog ไม่ได้:", e)
-        return
+    """เลือกไฟล์วิดีโอใหม่ → สลับไปโหมดวิดีโอเลย"""
+    path = _pick_file("เลือกไฟล์วิดีโอ",
+                      [("วิดีโอ", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("ทั้งหมด", "*.*")])
     if path:
         cfg.video_path = path
         cfg.video = True
-
-
-def toggle_video(icon, item):
-    """สลับเปิด/ปิดโหมดวิดีโอ — เปิดครั้งแรกที่ยังไม่มีไฟล์ → เปิด dialog"""
-    if cfg.video:
-        cfg.video = False
-    elif cfg.video_path:
-        cfg.video = True
-    else:
-        pick_video(icon, item)
+        cfg.clock = False
 
 
 def make_set_fit(val):
@@ -174,6 +176,20 @@ def make_set_art(val):
     return f
 
 
+def make_set_art_clock(val):
+    """เลือกสไตล์นาฬิกาปกตรง ๆ — เปิด art_source=clock ให้เลย"""
+    def f(icon, item):
+        cfg.art_clock_style = val
+        cfg.art_source = "clock"
+    return f
+
+
+def art_clock_item(key, label=None):
+    return MenuItem(label or clocks.STYLE_LABELS.get(key, key), make_set_art_clock(key),
+                    checked=lambda i, k=key: cfg.art_source == "clock" and cfg.art_clock_style == k,
+                    radio=True)
+
+
 def pick_art_video(icon, item):
     path = _pick_file("เลือกวิดีโอแทนปกอัลบั้ม",
                       [("วิดีโอ", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("ทั้งหมด", "*.*")])
@@ -190,20 +206,19 @@ def pick_art_image(icon, item):
         cfg.art_source = "image"
 
 
-def toggle_clock(icon, item):
-    cfg.clock = not cfg.clock
-
-
 def toggle_clock_cycle(icon, item):
     cfg.clock_cycle = not cfg.clock_cycle
-    if cfg.clock_cycle:
+    if cfg.clock_cycle:            # เปิดหมุนเวียน = สลับไปโหมดนาฬิกาเลย
         cfg.clock = True
+        cfg.video = False
 
 
 def make_set_clock(val):
+    """เลือกสไตล์นาฬิกาเต็มจอ = สลับไปโหมดนาฬิกาเลย"""
     def f(icon, item):
         cfg.clock_style = val
         cfg.clock = True
+        cfg.video = False
         cfg.clock_cycle = False
     return f
 
@@ -225,6 +240,14 @@ def viz_item(label, val):
 
 
 MENU = Menu(
+    # ── โหมดจอ: radio เดียว คลิกสลับได้ทันที ──
+    MenuItem("จอ: เพลง (now-playing)", set_mode_music,
+             checked=lambda i: not cfg.clock and not cfg.video, radio=True),
+    MenuItem("จอ: นาฬิกาเต็มจอ", set_mode_clock,
+             checked=lambda i: cfg.clock, radio=True),
+    MenuItem("จอ: วิดีโอเต็มจอ", set_mode_video,
+             checked=lambda i: cfg.video, radio=True),
+    Menu.SEPARATOR,
     MenuItem("แนวนอน (now-playing)", set_landscape,
              checked=lambda i: not cfg.portrait and not cfg.full, radio=True),
     MenuItem("แนวนอน เต็มจอ", set_full,
@@ -241,27 +264,13 @@ MENU = Menu(
         viz_item("wave (particle)", "wave"),
         viz_item("random (สุ่มสลับ)", "random"),
     )),
-    Menu.SEPARATOR,
-    MenuItem("ปกอัลบั้ม", Menu(
-        MenuItem("ปกจริง (จากเพลง)", make_set_art("art"),
-                 checked=lambda i: cfg.art_source == "art", radio=True),
-        MenuItem("นาฬิกา (หน้าปัดกลม)", make_set_art("clock"),
-                 checked=lambda i: cfg.art_source == "clock", radio=True),
-        MenuItem("วิดีโอ...", pick_art_video,
-                 checked=lambda i: cfg.art_source == "video", radio=True),
-        MenuItem("รูป / GIF...", pick_art_image,
-                 checked=lambda i: cfg.art_source == "image", radio=True),
-    )),
-    MenuItem("นาฬิกา", Menu(
-        MenuItem("เปิด/ปิดนาฬิกา", toggle_clock, checked=lambda i: cfg.clock),
-        Menu.SEPARATOR,
+    MenuItem("สไตล์นาฬิกาเต็มจอ", Menu(
         *[clock_item(k) for k in clocks.STYLES],
         Menu.SEPARATOR,
         MenuItem("หมุนเวียนทุกสไตล์ (45วิ)", toggle_clock_cycle,
                  checked=lambda i: cfg.clock_cycle),
     )),
-    MenuItem("โหมดวิดีโอ", Menu(
-        MenuItem("เปิด/ปิดวิดีโอ", toggle_video, checked=lambda i: cfg.video),
+    MenuItem("ตั้งค่าวิดีโอ", Menu(
         MenuItem("เลือกไฟล์วิดีโอ...", pick_video),
         Menu.SEPARATOR,
         MenuItem("คลิปกลาง (เต็มจอ)", make_set_fit("band"),
@@ -271,6 +280,20 @@ MENU = Menu(
         Menu.SEPARATOR,
         MenuItem("แพนช้า ๆ (ส่วนที่ล้นจอ)", toggle_video_pan,
                  checked=lambda i: cfg.video_pan),
+    )),
+    Menu.SEPARATOR,
+    MenuItem("ปกอัลบั้ม", Menu(
+        MenuItem("ปกจริง (จากเพลง)", make_set_art("art"),
+                 checked=lambda i: cfg.art_source == "art", radio=True),
+        MenuItem("นาฬิกา (เลือกสไตล์)", Menu(
+            *[art_clock_item(k) for k in clocks.STYLES],
+            Menu.SEPARATOR,
+            art_clock_item("cycle", "หมุนเวียนทุกสไตล์ (45วิ)"),
+        )),
+        MenuItem("วิดีโอ...", pick_art_video,
+                 checked=lambda i: cfg.art_source == "video", radio=True),
+        MenuItem("รูป / GIF...", pick_art_image,
+                 checked=lambda i: cfg.art_source == "image", radio=True),
     )),
     Menu.SEPARATOR,
     MenuItem("เนื้อเพลง (คาราโอเกะ)", toggle_lyrics, checked=lambda i: cfg.lyrics),

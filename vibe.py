@@ -1580,6 +1580,8 @@ def main():
                     help="ช่องปกอัลบั้ม: art=ปกจริง clock=นาฬิกา video/image=ไฟล์ (--art-file)")
     ap.add_argument("--art-file", metavar="FILE",
                     help="ไฟล์วิดีโอ/รูป/GIF สำหรับ --art-source video|image")
+    ap.add_argument("--art-clock", choices=clocks.STYLES + ["cycle"], metavar="STYLE",
+                    help="นาฬิกาแทนปก (เลือกสไตล์ตรง ๆ หรือ cycle) — เท่ากับ --art-source clock")
     ap.add_argument("--clock", nargs="?", const="nixie", choices=clocks.STYLES,
                     metavar="STYLE", help="โหมดนาฬิกา: " + " ".join(clocks.STYLES))
     ap.add_argument("--clock-cycle", action="store_true",
@@ -1591,6 +1593,9 @@ def main():
     args.video_pan = not args.no_video_pan
     args.art_video_path = args.art_file if args.art_source == "video" else None
     args.art_image_path = args.art_file if args.art_source == "image" else None
+    args.art_clock_style = args.art_clock
+    if args.art_clock:
+        args.art_source = "clock"
     args.clock_style = args.clock         # run() ใช้ clock_style
     args.clock = bool(args.clock) or args.clock_cycle
     run(args)
@@ -1724,11 +1729,10 @@ def run(args, stop_evt=None):
 
     def art_live_frame(loop_t, t):
         src = getattr(args, "art_source", "art")
-        if src == "clock":                            # นาฬิกาจัตุรัส — ทุกสไตล์
-            if getattr(args, "clock_cycle", False):   # โหมดหมุนเวียน → วนที่ปกด้วย
+        if src == "clock":                            # นาฬิกาจัตุรัส — สไตล์ของปกเอง
+            style = getattr(args, "art_clock_style", None) or "lumo"
+            if style == "cycle":                      # หมุนเวียนเฉพาะปก
                 style = clocks.STYLES[int(t / 45.0) % len(clocks.STYLES)]
-            else:
-                style = getattr(args, "clock_style", None) or "lumo"
             return clocks.render_art(style, ART, datetime.now(), t)
         if src == "video":
             path = getattr(args, "art_video_path", None)
