@@ -633,12 +633,9 @@ def make_art_assets(art: Image.Image):
     dark = Image.new("RGB", (PANEL_W, PANEL_H), (0, 0, 0))
     bg = Image.blend(bg, dark, 0.62)
 
-    # พื้นหลังแนวตั้ง (462 กว้าง x 1920 สูง): ขยายปกเป็นจัตุรัสใหญ่ → crop กลางแนวตั้ง → เบลอ → หรี่
-    bp = art.resize((PANEL_W, PANEL_W), Image.LANCZOS)   # square ใหญ่ (1920x1920)
-    cx0 = (PANEL_W - PANEL_H) // 2                       # (1920-462)/2
-    bp = bp.crop((cx0, 0, cx0 + PANEL_H, PANEL_W))       # 462 x 1920
-    bp = bp.filter(ImageFilter.GaussianBlur(40))
-    bp = Image.blend(bp, Image.new("RGB", (PANEL_H, PANEL_W), (0, 0, 0)), 0.62)
+    # พื้นหลังแนวตั้ง (462x1920): ใช้ bg แนวนอนตัวเดียวกันหมุน 90° — โทนสีแถบกลางปก
+    # กลมกลืนเท่าแนวนอน (เดิม crop แถบตั้งเต็มความสูงปก → เห็นสีแยกโซนบน/กลาง/ล่าง)
+    bp = bg.rotate(90, expand=True)
 
     accent, hue = dominant_accent(art)
     return crisp, bg, accent, hue, bp
