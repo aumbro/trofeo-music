@@ -46,6 +46,28 @@ python vibe.py --full --viz random       # ทดสอบ (ต่อจอ Trof
 **เครื่องนี้**: Python 3.12 @ `%LOCALAPPDATA%\Programs\Python\Python312`, com0com คู่ COM7⇄COM8 ลงไว้แล้ว
 **งานต่อ/ปรับได้:** จูนทิศ map ต่อเกม, เพิ่ม property ตามเกม, ทางเลือกสำรอง = screen-mirror (ยังไม่ทำ)
 
+## 💧 จอชุดน้ำ ChiZhu 320x320 (87AD:70DB) — ✅ ยิงภาพ/GIF ขึ้นจอผ่านแล้ว
+จอ AIO ของ Thermalright อีกตัว (หัวปั๊มชุดน้ำ) — คนละชิปกับ Trofeo:
+- **VID:PID = 87AD:70DB** (ChiZhu Tech "USBDISPLAY"), Windows ผูก WinUSB ให้เอง (ไม่ต้อง Zadig)
+- โปรโตคอล **CZ/SPISCRM** (ฝั่ง TRCC เรียก USBLCDNEW) — handshake 64B magic `12 34 56 78`
+  → อ่าน 1024B, PM=resp[24] (เครื่องนี้ PM=32 = **320x320 raw RGB565 big-endian**, cmd=3)
+- เฟรม = header 64B (magic, cmd@4, w@8, h@12, `2`@56, len@60) + payload รวดเดียว
+  (หั่น 16KiB) + ZLP ถ้าหาร 512 ลงตัว — **ไม่มี chunk 512+header แบบ LY, ไม่มี ACK**
+- ~27ms/เฟรม (≈35fps ได้สบาย) · อ้างอิง: thermalright-trcc-linux `BulkLcd` +
+  rejeb/thermalright-lcd-control `DisplayDevice87AD70DB320`
+- ไฟล์: **`czlcd.py`** (driver `CzLCD` API เดียวกับ `TrofeoLCD` + encoder RGB565 + `--test`)
+  · `send.py --dev cz` ใช้ได้ทุกโหมด (ภาพนิ่ง/GIF/วิดีโอ)
+- ✅ คอนเฟิร์มกับตาแล้ว (2026-07-17): ทิศ mount ตรง (encode_base 0) และ firmware
+  **เด้งกลับ logo ถ้าหยุดส่ง** → ต้อง keepalive resend ทุก ~1.5s เหมือน LY
+- ✅ **vibe.py รองรับแล้ว** (`--dev cz`, จอเหลี่ยมไม่ใช่จอกลม): `render_square()` layout
+  320x320 (ปกกลางบน→ชื่อเพลง→progress→สเปกตรัม rebin 30 แท่ง) + `_render_square_full`
+  (--full ทุก viz + แถบเพลงจิ๋ว) + --lyrics · assets ใช้ `make_art_assets_square` (เบากว่าจอใหญ่)
+  · encode ด้วย `czlcd.to_rgb565_be` แทน JPEG · ทดสอบจอจริง 30fps ผ่าน (demo + SMTC/loopback)
+- ✅ **vibe_tray รองรับแล้ว**: เมนู "จอ" เลือก Trofeo/จอชุดน้ำ (auto-detect ตอนเปิด),
+  สลับจอสด = set event หยุดรอบ `vibe.run()` ปัจจุบัน (`_run_stop`) → loop เปิดจอใหม่เอง,
+  เมนูโหมดโชว์ตามจอที่เลือก (`visible=`) · build_exe.bat เพิ่ม `--hidden-import czlcd` แล้ว
+- **งานต่อที่น่าทำ:** clock.py ลง 320x320 · โหมดสองจอพร้อมกัน (ตอนนี้เลือกทีละจอ)
+
 ## 📦 repo / remotes
 - personal (ของ Aum): `https://github.com/aumbro/trofeo-music` → `git push personal main`
 - origin (upstream): iTeRy-Jaturawit/thermalright-trofeo-916 (**อย่า push ไป origin**)

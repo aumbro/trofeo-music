@@ -2,6 +2,9 @@
 pyusb>=1.2.1
 pillow>=10.0.0
 
+# จอชุดน้ำ CZ 320x320 (czlcd.py) + vibe.py ใช้ numpy encode พิกเซล
+numpy>=1.26
+
 # backend libusb: โปรเจกต์นี้มี libusb-1.0.dll (64-bit) แถมมาในโฟลเดอร์แล้ว
 # trofeo.py โหลด dll นั้นเองอัตโนมัติ จึงไม่ต้องลง libusb-package
 # (ถ้าจะใช้ package แทน ให้ลง 'libusb-package' เวอร์ชันที่มี wheel เช่น 1.0.26.4/1.0.30.0

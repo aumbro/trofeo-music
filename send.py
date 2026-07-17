@@ -1,10 +1,13 @@
 """
-send.py — โปรแกรมส่งภาพ/GIF/วิดีโอขึ้นจอ Thermalright Trofeo 9.16 (โปรโตคอล LY)
+send.py — โปรแกรมส่งภาพ/GIF/วิดีโอขึ้นจอ Thermalright
+  default = Trofeo 9.16 (โปรโตคอล LY, 1920x462)
+  --dev cz = จอชุดน้ำ ChiZhu 320x320 (โปรโตคอล CZ, ดู czlcd.py)
 
 ตัวอย่าง:
   python send.py --test                 # ส่งภาพทดสอบ (เช็คทิศ/ขนาดจอ)
+  python send.py --test --dev cz        # ภาพทดสอบขึ้นจอชุดน้ำ 320x320
   python send.py picture.png            # ภาพนิ่ง (resend อัตโนมัติกัน firmware เด้ง logo)
-  python send.py clip.gif               # GIF วนเล่น
+  python send.py clip.gif --dev cz      # GIF วนเล่นบนจอชุดน้ำ
   python send.py movie.mp4 --loop       # วิดีโอวนเล่น (ต้องมี imageio[ffmpeg])
   python send.py pic.jpg --fit cover    # เต็มจอแบบ crop (ไม่มีขอบดำ)
   python send.py pic.jpg --rotate 0     # ถ้าภาพกลับหัว ลองสั่งมุมหมุนเอง (0/90/180/270)
@@ -26,6 +29,7 @@ except Exception:
 
 from PIL import Image, ImageSequence
 
+import czlcd
 import frame as F
 from trofeo import KEEPALIVE_INTERVAL, TrofeoLCD
 
@@ -77,12 +81,14 @@ def main():
     ap.add_argument("--loop", action="store_true", help="วนเล่น GIF/วิดีโอไม่รู้จบ")
     ap.add_argument("--pid", type=lambda s: int(s, 0), default=0x5408,
                     help="USB PID (default 0x5408 = LY)")
+    ap.add_argument("--dev", choices=["ly", "cz"], default="ly",
+                    help="รุ่นจอ: ly = Trofeo 9.16 (default), cz = จอชุดน้ำ 320x320")
     args = ap.parse_args()
 
     if not args.source and not args.test:
         ap.error("ต้องระบุไฟล์ หรือใช้ --test")
 
-    lcd = TrofeoLCD(pid=args.pid)
+    lcd = czlcd.CzLCD() if args.dev == "cz" else TrofeoLCD(pid=args.pid)
     log("กำลังเปิด USB + handshake ...")
     info = lcd.open()
     w, h = info["width"], info["height"]
@@ -91,6 +97,12 @@ def main():
         f"SUB={info['sub']} encode_base={base}")
 
     def enc(img):
+        if args.dev == "cz":
+            # จอ CZ: RGB565 (หรือ JPEG ตามรุ่น) — encoder อยู่ใน czlcd.py
+            return czlcd.encode_frame(img, w, h, jpeg=info["jpeg"],
+                                      encode_base=base,
+                                      orientation=args.orientation,
+                                      fit=args.fit, quality=args.quality)
         return F.encode_frame(img, w, h, encode_base=base,
                               orientation=args.orientation, fit=args.fit,
                               quality=args.quality)

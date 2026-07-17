@@ -23,6 +23,7 @@ vibe.py — Now-Playing + Audio Visualizer บนจอ Thermalright Trofeo 9.16
   python vibe.py --preview out.png  # เรนเดอร์ 1 เฟรมเป็น PNG แล้วออก (ไม่ต้องต่อจอ)
   python vibe.py --no-audio         # โชว์ now-playing อย่างเดียว (ไม่ capture เสียง)
   python vibe.py --rotate 0         # ถ้าจอกลับหัว/ตะแคง บังคับมุมหมุน wire เอง
+  python vibe.py --dev cz           # จอชุดน้ำเหลี่ยม 320x320 (โปรโตคอล CZ, ดู czlcd.py)
 
 deps เพิ่มจาก base: pip install soundcard winsdk numpy   (Windows เท่านั้น)
 กด Ctrl+C เพื่อออก
@@ -1365,6 +1366,192 @@ def render_portrait(snap, bands, audio_active, t, peaks=None, mascot=None):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+#  จอเหลี่ยม 320x320 (จอชุดน้ำ CZ — --dev cz, ดู czlcd.py)
+# ══════════════════════════════════════════════════════════════════════════
+SQ = 320                    # ด้านของจอ
+SQ_ART = 148                # ด้านของกล่องปกอัลบั้ม
+
+_FALLBACK_BG_SQ = None
+
+
+def fallback_bg_square():
+    """พื้นหลัง gradient เข้ม 320x320 (ตอนไม่มีปก) — แคชครั้งเดียว"""
+    global _FALLBACK_BG_SQ
+    if _FALLBACK_BG_SQ is None:
+        yy = np.linspace(0, 1, SQ)[:, None]
+        xx = np.linspace(0, 1, SQ)[None, :]
+        arr = np.zeros((SQ, SQ, 3), dtype=np.uint8)
+        arr[..., 0] = (8 + xx * 8).astype(np.uint8)
+        arr[..., 1] = (10 + yy * 10).astype(np.uint8)
+        arr[..., 2] = (18 + yy * 30).astype(np.uint8)
+        _FALLBACK_BG_SQ = Image.fromarray(arr, "RGB")
+    return _FALLBACK_BG_SQ
+
+
+def make_art_assets_square(art: Image.Image):
+    """คืน (art_crisp มุมมน, bg_blur 320x320 มืด, accent, hue) — index [0..3]
+    เข้ากันกับที่ render_square ใช้ (เบากว่า make_art_assets ที่สร้าง bg 1920)"""
+    sw, sh = art.size
+    s = min(sw, sh)
+    sq = art.crop(((sw - s) // 2, (sh - s) // 2, (sw - s) // 2 + s, (sh - s) // 2 + s))
+    crisp = sq.resize((SQ_ART, SQ_ART), Image.LANCZOS)
+    crisp.putalpha(_round_mask((SQ_ART, SQ_ART), 14))
+
+    bg = sq.resize((SQ, SQ), Image.LANCZOS).filter(ImageFilter.GaussianBlur(20))
+    bg = Image.blend(bg, Image.new("RGB", (SQ, SQ), (0, 0, 0)), 0.58)
+
+    accent, hue = dominant_accent(art)
+    return crisp, bg, accent, hue
+
+
+def _render_square_full(snap, img, bands, t, peaks, mascot, accent, viz, have):
+    """--full บนจอเหลี่ยม: viz เต็ม 320x320 + แถบ now-playing จิ๋วล่าง"""
+    W = H = SQ
+    img = Image.blend(img, Image.new("RGB", (W, H), (4, 5, 12)), 0.5)
+    d = ImageDraw.Draw(img, "RGBA")
+    art_assets = snap.get("_assets")
+    wbase = wave_base_hue(art_assets[3] if art_assets else 210.0)
+    e = getattr(mascot, "energy", 0.28)
+    kk = getattr(mascot, "kick", 0.0)
+    vy, vh = 2, H - 62                              # โซน viz (เว้นล่างให้แถบเพลง)
+    if snap.get("_lyrics_mode"):
+        draw_lyrics(img, d, 10, vy, W - 20, vh, snap.get("lyrics"), snap["pos"], accent)
+    elif viz == "dots":
+        draw_dot_matrix(d, 6, vy, W - 12, vh, bands, peaks, wbase,
+                        cols=24, invert=snap.get("_invert", False))
+    elif viz == "bars":
+        draw_mirror_bars(d, 0, vy, W, vh, bands, wbase, e, orient="h")
+    elif viz == "ribbon":
+        draw_ribbon_wave(img, 0, vy, W, vh, t, bands, e, wbase, orient="h")
+    elif viz == "classic":
+        draw_classic_bars(d, 6, vy, W - 12, vh, _rebin(bands, 30),
+                          _rebin(peaks, 30) if peaks is not None else None, wbase)
+    else:
+        particle_field().draw(img, 0, vy, W, vh, t, bands, e, kk, wbase)
+    # ── แถบ now-playing จิ๋วล่าง ──
+    d.rectangle([0, H - 58, W, H], fill=(0, 0, 0, 130))
+    if have:
+        tx = 10
+        if art_assets:
+            cov = art_assets[0].resize((40, 40), Image.LANCZOS)
+            img.paste(cov, (8, H - 50), cov)
+            tx = 56
+        draw_marquee(img, d, tx, H - 52, W - tx - 8, snap["title"], font(19),
+                     C_INK, t, speed=40)
+        meta = " · ".join(x for x in (snap["artist"], snap["album"]) if x)
+        if meta:
+            draw_marquee(img, d, tx, H - 28, W - tx - 8, meta, font(14, bold=False),
+                         accent, t, speed=34)
+        pos, dur = snap["pos"], snap["dur"]
+        if dur > 0:
+            frac = max(0.0, min(1.0, pos / dur))
+            d.rectangle([0, H - 4, W, H], fill=C_TRACK)
+            d.rectangle([0, H - 4, int(W * frac), H], fill=accent)
+    return img
+
+
+def render_square(snap, bands, audio_active, t, peaks=None, mascot=None):
+    """วาด 1 เฟรมจอเหลี่ยม 320x320 (จอชุดน้ำ):
+    ปกกลางบน → ชื่อเพลง/ศิลปิน → progress+เวลา → สเปกตรัมแถบล่าง
+    --full = viz เต็มจอ + แถบเพลงจิ๋ว · --lyrics = เนื้อเพลงแทนโซนกลาง/ล่าง"""
+    W = H = SQ
+    MG = 22
+    art_assets = snap.get("_assets")
+    have = snap["have"] and (snap["title"] or snap["artist"])
+
+    if art_assets:
+        img = art_assets[1].copy()
+        accent = art_assets[2]
+        base_hue = art_assets[3] - 40.0
+    else:
+        img = fallback_bg_square().copy()
+        accent = C_ACCENT
+        base_hue = 175.0
+
+    # ── โหมด --full: viz/เนื้อเพลง เต็มจอ ──
+    if snap.get("_full") and (snap.get("_lyrics_mode")
+                              or snap.get("_viz") in ("wave", "dots", "bars", "ribbon", "classic")):
+        return _render_square_full(snap, img, bands, t, peaks, mascot, accent,
+                                   snap.get("_viz"), have)
+
+    d = ImageDraw.Draw(img, "RGBA")
+
+    # ── ปกอัลบั้ม กลางบน (glow เต้นตามบีต) / มัสคอต ──
+    ax, ay = (W - SQ_ART) // 2, 16
+    force_m = snap.get("_force_mascot")
+    if snap.get("_glow", True):
+        draw_art_glow(img, ax, ay, SQ_ART, 24, accent, glow_strength(mascot))
+    if art_assets and not force_m:
+        img.paste(art_assets[0], (ax, ay), art_assets[0])
+        if snap.get("_sparkle", True):
+            draw_sparkles(d, ax, ay, SQ_ART, SQ_ART, t, getattr(mascot, "kick", 0.0))
+    elif mascot is not None:
+        d.rounded_rectangle([ax, ay, ax + SQ_ART, ay + SQ_ART], radius=14, fill=(18, 18, 26))
+        draw_mascot(d, ax + SQ_ART // 2, ay + SQ_ART - 16, 6, mascot, accent)
+    else:
+        d.rounded_rectangle([ax, ay, ax + SQ_ART, ay + SQ_ART], radius=14, fill=(30, 30, 38))
+        d.text((W / 2, ay + SQ_ART / 2), "♪", font=font(72), fill=C_MUTE, anchor="mm")
+
+    # ── โหมดเนื้อเพลง: ใช้พื้นที่ใต้ปกทั้งหมด ──
+    if snap.get("_lyrics_mode"):
+        draw_lyrics(img, d, 10, 176, W - 20, 136, snap.get("lyrics"), snap["pos"], accent)
+        return img
+
+    # ── ชื่อเพลง/ศิลปิน (จัดกลาง marquee) ──
+    if have:
+        title = snap["title"]
+        meta = " · ".join(x for x in (snap["artist"], snap["album"]) if x)
+        draw_marquee(img, d, MG, 178, W - 2 * MG, title, font(25),
+                     C_INK, t, speed=45, center=True)
+        if meta:
+            draw_marquee(img, d, MG, 212, W - 2 * MG, meta, font(16, bold=False),
+                         accent, t, speed=38, center=True)
+    else:
+        d.text((W / 2, 182), "ไม่มีเพลงเล่นอยู่", font=font(24), fill=C_MUTE, anchor="mt")
+        d.text((W / 2, 214), "เปิดเพลงได้เลย", font=font(15, bold=False),
+               fill=C_MUTE, anchor="mt")
+
+    # ── progress + เวลา ──
+    pos, dur = snap["pos"], snap["dur"]
+    if have and dur > 0:
+        frac = max(0.0, min(1.0, pos / dur))
+        py = 246
+        d.rounded_rectangle([MG, py, W - MG, py + 6], radius=3, fill=C_TRACK)
+        fx = MG + int((W - 2 * MG) * frac)
+        if fx > MG + 6:
+            d.rounded_rectangle([MG, py, fx, py + 6], radius=3, fill=accent)
+        d.ellipse([fx - 5, py - 2, fx + 5, py + 8], fill=C_INK)
+        f_t = font(13, bold=False)
+        d.text((MG, py + 12), fmt_time(pos), font=f_t, fill=C_MUTE, anchor="lt")
+        d.text((W - MG, py + 12), fmt_time(dur), font=f_t, fill=C_MUTE, anchor="rt")
+
+    # ── สเปกตรัมแถบล่าง (rebin 30 แท่ง ให้พอดีจอแคบ) ──
+    sq_bands = _rebin(bands, 30)
+    sq_peaks = _rebin(peaks, 30) if peaks is not None else None
+    n = len(sq_bands)
+    base_y, top_y = 316, 280
+    bar_max = base_y - top_y
+    gap = 3
+    bw = (W - 2 * MG - gap * (n - 1)) / n
+    for i in range(n):
+        mag = float(sq_bands[i])
+        bh = int(bar_max * mag)
+        x0 = MG + i * (bw + gap)
+        col = band_color(i / max(1, n - 1), mag, base_hue)
+        d.rounded_rectangle([x0, base_y - bh, x0 + bw, base_y],
+                            radius=int(bw / 2), fill=col + (235,))
+        if sq_peaks is not None:
+            ph = int(bar_max * float(sq_peaks[i]))
+            if ph > 2:
+                cap_col = _lerp(col, (255, 255, 255), 0.6)
+                d.rectangle([x0, base_y - ph - 2, x0 + bw, base_y - ph], fill=cap_col + (255,))
+    if not audio_active and have:
+        d.text((W / 2, base_y - bar_max - 14), "ไม่ได้ capture เสียง",
+               font=font(12, bold=False), fill=C_MUTE, anchor="mt")
+    return img
+
+
+# ══════════════════════════════════════════════════════════════════════════
 #  ส่งเข้าจอ
 # ══════════════════════════════════════════════════════════════════════════
 def to_wire(canvas, panel_w, panel_h, angle):
@@ -1423,6 +1610,8 @@ def main():
     ap.add_argument("--preview", metavar="PNG", help="เรนเดอร์ 1 เฟรมเป็น PNG แล้วออก")
     ap.add_argument("--art", metavar="IMG", help="ใช้รูปนี้เป็นปก (ไว้เทสต์ preview/demo)")
     ap.add_argument("--pid", type=lambda s: int(s, 0), default=0x5408)
+    ap.add_argument("--dev", choices=["ly", "cz"], default="ly",
+                    help="รุ่นจอ: ly = Trofeo 9.16 (default), cz = จอชุดน้ำเหลี่ยม 320x320")
     args = ap.parse_args()
     run(args)
 
@@ -1434,6 +1623,8 @@ def run(args, stop_evt=None):
     if stop_evt is None:
         stop_evt = threading.Event()
     art_cache = {"key": None, "assets": None}
+    dev_cz = getattr(args, "dev", "ly") == "cz"     # จอชุดน้ำเหลี่ยม 320x320
+    assets_fn = make_art_assets_square if dev_cz else make_art_assets
 
     def build_snapshot(t):
         if args.demo:
@@ -1445,7 +1636,7 @@ def run(args, stop_evt=None):
         key = snap.get("key")
         if art is not None and key != art_cache["key"]:
             try:
-                art_cache["assets"] = make_art_assets(art)
+                art_cache["assets"] = assets_fn(art)
             except Exception:
                 art_cache["assets"] = None
             art_cache["key"] = key
@@ -1463,7 +1654,10 @@ def run(args, stop_evt=None):
         snap["_lyrics_mode"] = args.lyrics
         return snap
 
-    render_fn = render_portrait if args.portrait else render
+    if dev_cz:
+        render_fn = render_square
+    else:
+        render_fn = render_portrait if args.portrait else render
 
     # ── โหมด preview: เฟรมเดียวออกไฟล์ ──
     if args.preview:
@@ -1472,7 +1666,7 @@ def run(args, stop_evt=None):
         snap["_assets"] = None
         if args.art:
             try:
-                snap["_assets"] = make_art_assets(Image.open(args.art).convert("RGB"))
+                snap["_assets"] = assets_fn(Image.open(args.art).convert("RGB"))
             except Exception as e:
                 log("โหลด --art ไม่ได้:", e)
         if args.mascot:
@@ -1510,8 +1704,12 @@ def run(args, stop_evt=None):
                          daemon=True).start()
 
     # ── เปิดจอ (รอจนกว่าจะเสียบ/เปิดได้ — เผื่อ tray เปิดตอนจอยังไม่พร้อม) ──
-    from trofeo import TrofeoLCD
-    lcd = TrofeoLCD(pid=args.pid)
+    if dev_cz:
+        from czlcd import CzLCD, to_rgb565_be
+        lcd = CzLCD()
+    else:
+        from trofeo import TrofeoLCD
+        lcd = TrofeoLCD(pid=args.pid)
     info = None
     while info is None and not stop_evt.is_set():
         try:
@@ -1525,12 +1723,13 @@ def run(args, stop_evt=None):
     base = info["encode_base"]
     if args.rotate is not None:
         angle = args.rotate
-    elif args.portrait:
+    elif args.portrait and not dev_cz:
         angle = (base + (270 if args.flip else 90)) % 360   # 462x1920 → หมุน +90
     else:
         angle = base
     log(f"เชื่อมต่อ {info['width']}x{info['height']} encode_base={base} "
-        f"→ {'แนวตั้ง' if args.portrait else 'แนวนอน'} wire_angle={angle}")
+        f"→ {'จอเหลี่ยม' if dev_cz else ('แนวตั้ง' if args.portrait else 'แนวนอน')} "
+        f"wire_angle={angle}")
 
     t0 = time.time()
     period = 1.0 / max(1.0, args.fps)
@@ -1555,10 +1754,13 @@ def run(args, stop_evt=None):
             dt = t - prev_t
             prev_t = t
             # เลือก render_fn + มุมหมุน จาก args สด ๆ (เปลี่ยนแนวได้ live จาก tray)
-            render_fn = render_portrait if args.portrait else render
+            if dev_cz:
+                render_fn = render_square
+            else:
+                render_fn = render_portrait if args.portrait else render
             if args.rotate is not None:
                 angle = args.rotate
-            elif args.portrait:
+            elif args.portrait and not dev_cz:
                 angle = (base + (270 if args.flip else 90)) % 360
             else:
                 angle = base
@@ -1583,7 +1785,10 @@ def run(args, stop_evt=None):
             canvas = render_fn(snap, bands, active, t, peaks, mascot=manim)
             wire = to_wire(canvas, info["width"], info["height"], angle)
             try:
-                lcd.send_jpeg(to_jpeg(wire, args.quality))
+                if dev_cz:                    # จอ CZ รับ raw RGB565 ไม่ใช่ JPEG
+                    lcd.send_frame(to_rgb565_be(wire))
+                else:
+                    lcd.send_jpeg(to_jpeg(wire, args.quality))
             except Exception as e:            # USB glitch (I/O error ฯลฯ) → reconnect ไม่ crash
                 log("USB error:", type(e).__name__, e, "— reconnect ...")
                 try:
